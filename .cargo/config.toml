@@ -1,0 +1,14 @@
+[unstable]
+build-std = ["core", "alloc", "compiler_builtins"]
+build-std-features = ["compiler-builtins-mem"]
+
+[alias]
+uefi_boot = "build -p uefi_boot --target x86_64-unknown-uefi"
+kernel = "build -p kernel --target x86_64-unknown-none"
+
+[target.x86_64-unknown-none]
+rustflags = [
+    "-C", "link-arg=-Tkernel/linker.ld",
+    "-C", "relocation-model=static",
+    "-C", "code-model=kernel",    # <-- THÊM DÒNG NÀY
+]

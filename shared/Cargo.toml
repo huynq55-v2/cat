@@ -1,0 +1,15 @@
+[package]
+name = "shared"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+spin = "0.10.0"
+lazy_static = { version = "1.5.0", features = ["spin_no_std"] }
+uart_16550 = "0.4.0"
+
+[features]
+serial = []

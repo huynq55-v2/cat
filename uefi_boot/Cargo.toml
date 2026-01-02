@@ -1,0 +1,11 @@
+[package]
+name = "uefi_boot"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+uefi = { version = "0.36.1", features = [ "logger" ] }
+xmas-elf = "0.10.0"
+shared = { path = "../shared" }
+log = "0.4.29"
+x86_64 = "0.15.4"

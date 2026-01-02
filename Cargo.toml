@@ -1,0 +1,10 @@
+[workspace]
+resolver = "3"
+members = ["kernel", "shared", "uefi_boot"]
+
+[profile.release]
+panic = "abort"
+lto = true # binary nhỏ, nhanh, sạch
+
+[profile.dev]
+panic = "abort"

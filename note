@@ -1,0 +1,97 @@
+QEMU
+ └── OVMF (EDK2 UEFI firmware)
+      └── BOOTX64.EFI   ← bạn viết bằng Rust
+           ├── Load kernel ELF
+           ├── Setup paging (higher-half)
+           ├── Build BootInfo
+           ├── ExitBootServices
+           └── jump kernel_entry(bootinfo)
+===============================================================================
+Stack alignment (căn chỉnh stack)
+
+Stack là vùng bộ nhớ lưu dữ liệu tạm thời khi gọi hàm (local variables, return addresses,…)
+
+Stack alignment = đảm bảo con trỏ stack (RSP) chia hết cho 16 bytes trước khi gọi hàm
+
+Vì sao?
+
+CPU SIMD / SSE yêu cầu stack 16-byte aligned để hoạt động ổn định
+
+Rust / C / SysV64 ABI tuân theo quy tắc này
+
+Ví dụ lỗi stack misalignment:
+
+Khi dùng SSE / AVX trên stack không 16-byte aligned → crash
+===============================================================================
+Trong Rust, unwrap() là một method được dùng với các kiểu Option<T> hoặc Result<T, E> để lấy giá trị bên trong.
+
+1️⃣ Với Option<T>
+
+Option<T> có hai giá trị:
+
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+
+Some(x) → có giá trị x
+
+None → không có giá trị
+
+Ví dụ:
+
+let maybe_number: Option<i32> = Some(42);
+let n = maybe_number.unwrap(); // n = 42
+
+
+Nếu là None thì unwrap() panic, dừng chương trình:
+
+let maybe_number: Option<i32> = None;
+let n = maybe_number.unwrap(); // panic: called `Option::unwrap()` on a `None` value
+
+2️⃣ Với Result<T, E>
+
+Result<T, E> dùng để xử lý lỗi:
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+
+Ok(x) → thành công, giá trị là x
+
+Err(e) → thất bại, giá trị lỗi là e
+
+fn divide(a: i32, b: i32) -> Result<i32, &'static str> {
+    if b == 0 { Err("divide by zero") } else { Ok(a / b) }
+}
+
+let res = divide(10, 2).unwrap(); // 5
+let res = divide(10, 0).unwrap(); // panic: "divide by zero"
+
+⚠️ Lưu ý
+
+unwrap() dễ panic, nên chỉ dùng khi chắc chắn có giá trị.
+
+Thay thế an toàn:
+
+match:
+
+match maybe_number {
+    Some(n) => println!("Number = {}", n),
+    None => println!("No value"),
+}
+
+
+unwrap_or(default) → lấy giá trị hoặc dùng mặc định nếu None / Err
+
+expect("message") → như unwrap nhưng có thông báo lỗi rõ ràng
+===============================================================================
+Build commands:
+cargo +nightly uefi_boot --release
+cargo +nightly kernel --release
+===============================================================================
+Install QEMU OVMF (UEFI firmware):
+sudo apt install ovmf
