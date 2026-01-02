@@ -9,7 +9,8 @@ use uefi::mem::memory_map::MemoryMap;
 use uefi::prelude::*;
 use uefi::proto::media::file::{File, FileAttribute, FileInfo, FileMode};
 use x86_64::structures::paging::{
-    FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PageTableFlags, PhysFrame, Size4KiB,
+    FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PageTableFlags, PhysFrame, Size2MiB,
+    Size4KiB,
 };
 use x86_64::{PhysAddr, VirtAddr};
 use xmas_elf::ElfFile;
@@ -258,23 +259,93 @@ fn main() -> Status {
         (e2 as *const _ as u64) - (e1 as *const _ as u64)
     };
 
-    // 2. Identity Map đoạn code hiện tại
+    // 1. Lấy Memory Map tạm thời để quét Max RAM
+    // Lưu ý: MemoryType::LOADER_DATA chỉ là loại ram cấp cho mmap này, không quan trọng lắm
+    let mmap_storage = boot::memory_map(MemoryType::LOADER_DATA).expect("Failed to get memory map");
+
+    let mut max_phys_addr = 0;
+
+    // 2. Duyệt để tìm địa chỉ vật lý cuối cùng
+    for descriptor in mmap_storage.entries() {
+        let start = descriptor.phys_start;
+        let size = descriptor.page_count * 4096;
+        let end = start + size;
+
+        if end > max_phys_addr {
+            max_phys_addr = end;
+        }
+    }
+
+    // Làm tròn max_phys_addr lên 2MB gần nhất để map cho đẹp (Alignment)
+    // Ví dụ RAM lẻ 8GB + chút ít thì làm tròn lên để map trọn vẹn
+    max_phys_addr = (max_phys_addr + 0x1fffff) & !0x1fffff;
+
+    info!(
+        "Detected Max Physical Address: {:#x} ({} MB)",
+        max_phys_addr,
+        max_phys_addr / 1024 / 1024
+    );
+
+    // -----------------------------------------------------------------------
+    // HHDM MAPPING (Dynamic Size)
+    // -----------------------------------------------------------------------
+    const HHDM_OFFSET: u64 = 0xffff_8000_0000_0000;
+
+    let start_frame = PhysFrame::<Size2MiB>::containing_address(PhysAddr::new(0));
+    // Thay vì hardcode 4GB, ta dùng max_phys_addr vừa tìm được
+    let end_frame = PhysFrame::<Size2MiB>::containing_address(PhysAddr::new(max_phys_addr - 1));
+
+    info!("Mapping HHDM from 0 to {:#x}...", max_phys_addr);
+
+    for frame in PhysFrame::range_inclusive(start_frame, end_frame) {
+        let phys_addr = frame.start_address().as_u64();
+        let virt_addr = phys_addr + HHDM_OFFSET;
+
+        let page = Page::<Size2MiB>::containing_address(VirtAddr::new(virt_addr));
+        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+
+        unsafe {
+            let _ = mapper
+                .map_to(page, frame, flags, &mut frame_allocator)
+                .ok()
+                .map(|f| f.flush());
+        }
+    }
+
+    info!("HHDM mapped successfully!");
+
+    // -----------------------------------------------------------------------
+    // [FIX] IDENTITY MAP ĐOẠN CODE HIỆN TẠI (TRAMPOLINE)
+    // -----------------------------------------------------------------------
+    // Bắt buộc phải có để CPU không bị crash ngay sau khi đổi CR3.
+
     let current_rip: u64;
     unsafe { core::arch::asm!("lea {}, [rip]", out(reg) current_rip) };
+
+    // Làm tròn xuống đầu trang 4K
     let start_rip = current_rip & !0xfff;
 
+    info!(
+        "Identity mapping current execution code at {:#x}",
+        start_rip
+    );
+
+    // Map khoảng 512 trang (2MB) xung quanh vị trí hiện tại cho chắc ăn
+    // Để đảm bảo cả code asm! và stack hiện tại của bootloader đều nằm trong đó.
     for offset in 0..512 {
         let addr = start_rip + (offset * 0x1000);
         let page = Page::<Size4KiB>::containing_address(VirtAddr::new(addr));
         let frame = PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(addr));
+
         unsafe {
             let _ = mapper
                 .map_to(
                     page,
                     frame,
-                    PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
+                    PageTableFlags::PRESENT | PageTableFlags::WRITABLE, // Writable để stack hoạt động
                     &mut frame_allocator,
                 )
+                .ok()
                 .map(|f| f.flush());
         }
     }
@@ -282,11 +353,9 @@ fn main() -> Status {
     // 3. Exit Boot Services
     let mmap = unsafe { boot::exit_boot_services(Some(MemoryType::LOADER_DATA)) };
 
-    // core::mem::forget(mmap);
-
     // 4. Chuẩn bị tham số
     // Lưu ý: entries().next() lấy phần tử đầu tiên để làm mốc địa chỉ
-    let mmap_addr = mmap
+    let mmap_addr_phys = mmap
         .entries()
         .next()
         .map(|d| d as *const _ as u64)
@@ -311,17 +380,14 @@ fn main() -> Status {
             entry = in(reg) entry_point,
 
             // Tham số Kernel: fn(mmap_addr, mmap_len, desc_size)
-            in("rdi") mmap_addr,
+            in("rdi") mmap_addr_phys,
             in("rsi") mmap_len,
             in("rdx") desc_size,
+            in("rcx") HHDM_OFFSET,
 
             options(noreturn)
         );
     }
-
-    // Đặt ở đây: Mặc dù code không bao giờ chạy tới đây do options(noreturn),
-    // nhưng nó giúp compiler hiểu đúng ý đồ và không drop mmap ở phía trên.
-    core::mem::forget(mmap);
 }
 
 #[panic_handler]
