@@ -3,8 +3,13 @@
 
 // Giả sử bạn đã có macro serial_println! từ shared library hoặc module
 use shared::{panic::panic_handler_impl, serial_println};
+mod heap_allocator;
+mod layout;
+mod pml4;
 mod pmm;
 mod spinlock;
+
+extern crate alloc;
 
 // --- 1. ĐỊNH NGHĨA LẠI CẤU TRÚC UEFI (Chuẩn C) ---
 #[repr(C)]
@@ -107,35 +112,21 @@ pub extern "C" fn _start(
         max_phys_addr,
     );
 
-    serial_println!("--- PMM STRESS TEST START ---");
+    let mut frame_allocator = pmm::KernelFrameAllocator;
+    let mut mapper = unsafe { pml4::init_mapper(hhdm_offset) };
 
-    let mut allocated_count = 0;
+    heap_allocator::init_heap(&mut mapper, &mut frame_allocator)
+        .expect("Heap initialization failed");
 
-    // Thử cấp phát cho đến khi hết bộ nhớ (None)
-    // Lưu ý: Chúng ta không lưu địa chỉ vào mảng vì không đủ RAM ảo/Stack để chứa 2 triệu u64
-    while let Some(_frame) = pmm::allocate_frame() {
-        allocated_count += 1;
+    serial_println!("Heap is ready!");
 
-        // Cứ mỗi 100,000 frames thì in một lần để biết hệ thống vẫn đang chạy
-        if allocated_count % 100000 == 0 {
-            serial_println!("Progress: Allocated {} frames...", allocated_count);
-        }
-    }
-
-    serial_println!("--- PMM STRESS TEST RESULT ---");
-    serial_println!("Successfully allocated: {} frames", allocated_count);
-    // Ép kiểu allocated_count sang u64
-    let total_bytes = (allocated_count as u64) * 4096;
-    let total_mb = total_bytes / 1024 / 1024;
-
-    serial_println!("Total memory allocated: {} MB", total_mb);
-
-    // Thử cấp phát thêm một lần nữa để chắc chắn nó trả về None
-    if pmm::allocate_frame().is_none() {
-        serial_println!("Confirmed: PMM returns None when out of memory.");
-    }
-
-    serial_println!("--- STRESS TEST FINISHED ---");
+    use alloc::vec::Vec;
+    serial_println!("Testing Vec...");
+    let mut v = Vec::new();
+    v.push(1);
+    v.push(2);
+    v.push(3);
+    serial_println!("Vec content: {:?}", v);
 
     loop {
         unsafe { core::arch::asm!("hlt") }

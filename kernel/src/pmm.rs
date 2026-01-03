@@ -1,6 +1,8 @@
 use crate::MemoryDescriptor;
 use crate::spinlock::Spinlock;
 use shared::serial_println;
+use x86_64::PhysAddr;
+use x86_64::structures::paging::{FrameAllocator, PhysFrame, Size4KiB};
 
 pub const PAGE_SIZE: u64 = 4096;
 
@@ -216,4 +218,13 @@ pub fn allocate_frame() -> Option<u64> {
 
 pub fn free_frame(phys_addr: u64) {
     PMM.lock().free_frame_internal(phys_addr);
+}
+
+pub struct KernelFrameAllocator;
+
+unsafe impl FrameAllocator<Size4KiB> for KernelFrameAllocator {
+    fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
+        // Gọi chính hàm allocate_frame() mà bạn đã test thành công!
+        crate::pmm::allocate_frame().map(|phys| PhysFrame::containing_address(PhysAddr::new(phys)))
+    }
 }
