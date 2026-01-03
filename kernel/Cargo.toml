@@ -7,3 +7,4 @@ edition = "2024"
 shared = { path = "../shared" }
 x86_64 = "0.15.4"
 linked_list_allocator = "0.10.5"
+lazy_static = { version = "1.5.0", features = ["spin_no_std"] }

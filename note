@@ -95,3 +95,50 @@ cargo +nightly kernel --release
 ===============================================================================
 Install QEMU OVMF (UEFI firmware):
 sudo apt install ovmf
+===============================================================================
+Nếu ví Kernel như một tòa nhà an ninh cao:
+
+    GDT là hệ thống phân quyền (thẻ nhân viên, thẻ khách, thẻ giám đốc).
+
+    TSS là lối thoát hiểm khẩn cấp khi có sự cố cháy nổ (Stack Overflow).
+
+Dưới đây là giải thích chi tiết và cách hiện thực.
+1. Khái niệm & Tại sao chúng cần thiết?
+A. GDT (Global Descriptor Table)
+
+Trong chế độ 64-bit (Long Mode), CPU không còn dùng GDT để quản lý bộ nhớ (Segmentation) theo kiểu cũ (Base/Limit) nữa vì chúng ta đã dùng Paging. Tuy nhiên, GDT vẫn bắt buộc tồn tại vì 2 lý do:
+
+    Phân quyền (Privilege Levels): CPU cần GDT để biết đoạn code nào chạy ở Kernel Mode (Ring 0) và đoạn code nào chạy ở User Mode (Ring 3).
+
+    Load TSS: GDT chứa một mục đặc biệt trỏ đến TSS. Không có GDT, CPU không tìm thấy TSS.
+
+B. TSS (Task State Segment)
+
+Trong quá khứ, TSS dùng để lưu trạng thái các tiến trình (Hardware Task Switching), nhưng cách này quá chậm nên đã bị bỏ. Trong 64-bit, TSS chỉ còn một nhiệm vụ sinh tử: Chứa các Stack Pointer (Ngăn xếp) dự phòng.
+
+Vấn đề "Gà và Trứng" (Stack Overflow):
+
+    Giả sử Kernel Stack bị tràn (Stack Overflow).
+
+    CPU phát hiện lỗi, nó muốn gọi hàm xử lý lỗi (Exception Handler).
+
+    Để gọi hàm, CPU cần đẩy (push) địa chỉ quay về vào Stack.
+
+    Nhưng Stack đang đầy! CPU không push được -> Sinh ra lỗi Double Fault.
+
+    CPU lại cố push Double Fault vào Stack -> Vẫn đầy -> Triple Fault -> Restart máy.
+
+Giải pháp (IST - Interrupt Stack Table): TSS cho phép bạn khai báo 7 cái ngăn xếp "sơ cua" (IST). Khi có lỗi nghiêm trọng (như Double Fault), CPU sẽ tự động nhảy sang Stack sơ cua này để xử lý, thay vì dùng Stack cũ đang bị hỏng.
+2. Cần những gì để Implement?
+
+Bạn không cần viết thủ công từng bit, vì thư viện x86_64 mà bạn đang dùng đã hỗ trợ tận răng các struct này.
+
+Các bước thực hiện:
+
+    Tạo TSS: Khai báo một IST stack riêng cho Double Fault.
+
+    Tạo GDT: Thêm Kernel Code Segment, Kernel Data Segment và TSS Segment vào đó.
+
+    Lazy Static: Vì GDT và TSS phải tồn tại suốt đời chương trình, chúng ta dùng lazy_static để khởi tạo chúng.
+
+    Load: Dùng lệnh assembly (qua wrapper của Rust) để nạp GDT và TSS vào thanh ghi CPU.

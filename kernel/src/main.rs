@@ -3,6 +3,7 @@
 
 // Giả sử bạn đã có macro serial_println! từ shared library hoặc module
 use shared::{panic::panic_handler_impl, serial_println};
+mod gdt;
 mod heap_allocator;
 mod layout;
 mod pml4;
@@ -66,6 +67,11 @@ pub extern "C" fn _start(
         mmap_len,
         desc_size
     );
+
+    // 1. Init GDT & TSS (Nên làm sớm nhất có thể)
+    gdt::init();
+
+    serial_println!("GDT & TSS initialized.");
     let mut usable_pages = 0;
     let mut total_pages = 0;
 
