@@ -49,12 +49,13 @@ pub extern "C" fn _start(
     mmap_len: u64,
     desc_size: u64,
     hhdm_offset: u64,
+    max_phys_addr: u64,
 ) -> ! {
     serial_println!("Hello from Kernel with Spinlock PMM!");
     serial_println!("HHDM Offset: {:#x}", hhdm_offset);
-    shared::serial_println!("--------------------------------------------------");
+    serial_println!("--------------------------------------------------");
     let mmap_addr_virt = mmap_addr_phys + hhdm_offset;
-    shared::serial_println!(
+    serial_println!(
         "MMap Virtual Address: {:#x}, Length: {}, Descriptor Size: {}",
         mmap_addr_virt,
         mmap_len,
@@ -73,7 +74,7 @@ pub extern "C" fn _start(
         // Ép kiểu địa chỉ đó thành con trỏ MemoryDescriptor
         let desc = unsafe { &*(addr as *const MemoryDescriptor) };
 
-        shared::serial_println!(
+        serial_println!(
             "Region {:3}: [{:#016x} - {:#016x}] {:20} ({} pages)",
             i,
             desc.phys_start,
@@ -90,24 +91,51 @@ pub extern "C" fn _start(
         }
     }
 
-    shared::serial_println!("--------------------------------------------------");
-    shared::serial_println!("Total Memory: {} MB", (total_pages * 4096) / 1024 / 1024);
-    shared::serial_println!(
+    serial_println!("--------------------------------------------------");
+    serial_println!("Total Memory: {} MB", (total_pages * 4096) / 1024 / 1024);
+    serial_println!(
         "Free RAM (Usable): {} MB",
         (usable_pages * 4096) / 1024 / 1024
     );
 
     // 1. Init (Cần unsafe vì thao tác raw pointer bên trong init)
-    pmm::init(mmap_addr_phys, mmap_len, desc_size, hhdm_offset);
+    pmm::init(
+        mmap_addr_phys,
+        mmap_len,
+        desc_size,
+        hhdm_offset,
+        max_phys_addr,
+    );
 
-    // 2. Alloc (Không cần unsafe nữa!)
-    if let Some(frame) = pmm::allocate_frame() {
-        serial_println!("Allocated frame: {:#x}", frame);
-        pmm::free_frame(frame);
-        serial_println!("Freed frame.");
-    } else {
-        serial_println!("Out of memory!");
+    serial_println!("--- PMM STRESS TEST START ---");
+
+    let mut allocated_count = 0;
+
+    // Thử cấp phát cho đến khi hết bộ nhớ (None)
+    // Lưu ý: Chúng ta không lưu địa chỉ vào mảng vì không đủ RAM ảo/Stack để chứa 2 triệu u64
+    while let Some(_frame) = pmm::allocate_frame() {
+        allocated_count += 1;
+
+        // Cứ mỗi 100,000 frames thì in một lần để biết hệ thống vẫn đang chạy
+        if allocated_count % 100000 == 0 {
+            serial_println!("Progress: Allocated {} frames...", allocated_count);
+        }
     }
+
+    serial_println!("--- PMM STRESS TEST RESULT ---");
+    serial_println!("Successfully allocated: {} frames", allocated_count);
+    // Ép kiểu allocated_count sang u64
+    let total_bytes = (allocated_count as u64) * 4096;
+    let total_mb = total_bytes / 1024 / 1024;
+
+    serial_println!("Total memory allocated: {} MB", total_mb);
+
+    // Thử cấp phát thêm một lần nữa để chắc chắn nó trả về None
+    if pmm::allocate_frame().is_none() {
+        serial_println!("Confirmed: PMM returns None when out of memory.");
+    }
+
+    serial_println!("--- STRESS TEST FINISHED ---");
 
     loop {
         unsafe { core::arch::asm!("hlt") }

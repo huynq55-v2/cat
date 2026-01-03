@@ -384,6 +384,7 @@ fn main() -> Status {
             in("rsi") mmap_len,
             in("rdx") desc_size,
             in("rcx") HHDM_OFFSET,
+            in("r8") max_phys_addr,
 
             options(noreturn)
         );
