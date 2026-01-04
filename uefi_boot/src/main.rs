@@ -1,6 +1,7 @@
-#![no_std]
-#![no_main]
+#![no_std] // No Standard Library
+#![no_main] // No Main Entry Point
 
+// Imports
 use core::slice;
 use log::info;
 use shared::panic::panic_handler_impl;
@@ -16,9 +17,11 @@ use x86_64::{PhysAddr, VirtAddr};
 use xmas_elf::ElfFile;
 use xmas_elf::program::Type;
 
+// A simple Bump Allocator for the Bootloader
+// Since the bootloader is short-lived, we don't need a complex allocator with deallocation.
 struct BumpAllocator {
-    next: u64,
-    end: u64,
+    next: u64, // Next free address
+    end: u64,  // End of allocated memory pool
 }
 
 impl BumpAllocator {
@@ -31,31 +34,37 @@ impl BumpAllocator {
     }
 }
 
+// Implement FrameAllocator for our BumpAllocator
+// This allows us to use it with x86_64 page table methods
 unsafe impl FrameAllocator<Size4KiB> for BumpAllocator {
     fn allocate_frame(&mut self) -> Option<PhysFrame> {
         if self.next >= self.end {
-            return None;
+            return None; // Out of memory
         }
 
         let frame_addr = PhysAddr::new(self.next);
         let frame = PhysFrame::containing_address(frame_addr);
 
-        self.next += 4096;
+        self.next += 4096; // Advance by one page
 
         Some(frame)
     }
 }
 
+// UEFI Entry Point
 #[entry]
 fn main() -> Status {
+    // Initialize UEFI helpers (logging, etc.)
     uefi::helpers::init().unwrap();
     info!("Hello from UEFI Bootloader!");
 
+    // Get the file system protocol to access files
     let image_handle = boot::image_handle();
     let mut fs =
         boot::get_image_file_system(image_handle).expect("Failed to get image file system");
     let mut root = fs.open_volume().expect("Failed to open root volume");
 
+    // Open the 'kernel' file
     let mut kernel_file = root
         .open(
             uefi::cstr16!("kernel"),
@@ -68,6 +77,7 @@ fn main() -> Status {
 
     info!("Found kernel file");
 
+    // Get file size
     let mut info_buf = [0u8; 128];
     let file_info = kernel_file
         .get_info::<FileInfo>(&mut info_buf)
@@ -76,6 +86,7 @@ fn main() -> Status {
 
     info!("Kernel file size: {} bytes", file_size);
 
+    // Allocate memory to read the kernel file
     let pages_needed = (file_size as usize).div_ceil(0x1000);
 
     let file_buffer_addr = boot::allocate_pages(
@@ -88,16 +99,20 @@ fn main() -> Status {
     let file_buffer =
         unsafe { slice::from_raw_parts_mut(file_buffer_addr.as_ptr(), pages_needed * 0x1000) };
 
+    // Read kernel content into memory
     let len = kernel_file
         .read(file_buffer)
         .expect("Failed to read kernel file");
 
     let kernel_data = &file_buffer[..len];
 
+    // Parse ELF Header
     let elf = ElfFile::new(kernel_data).expect("Failed to parse ELF");
     let entry_point = elf.header.pt2.entry_point();
     info!("ELF Entry point: {:#x}", entry_point);
 
+    // Setup Page Tables
+    // We allocate a pool of memory for page tables
     const PAGE_TABLE_POOL_SIZE: usize = 1024;
 
     let pool_addr = boot::allocate_pages(
@@ -116,16 +131,19 @@ fn main() -> Status {
         PAGE_TABLE_POOL_SIZE
     );
 
+    // Allocate PML4 (Level 4 Page Table)
     let pml4_frame = frame_allocator
         .allocate_frame()
         .expect("Failed to allocate PML4 (Pool empty?)");
 
     let pml4_phys = pml4_frame.start_address();
     let pml4 = unsafe { &mut *(pml4_phys.as_u64() as *mut PageTable) };
-    pml4.zero();
+    pml4.zero(); // Clear it
 
+    // Create a Mapper using OffsetPageTable (initially offset 0 for identity mapping)
     let mut mapper = unsafe { OffsetPageTable::new(pml4, VirtAddr::new(0)) };
 
+    // Load segments from ELF
     for ph in elf.program_iter() {
         if let Ok(Type::Load) = ph.get_type() {
             let mem_size = ph.mem_size();
@@ -138,6 +156,7 @@ fn main() -> Status {
                 virt_addr, mem_size, file_size
             );
 
+            // Allocate physical memory for the segment
             let pages = (mem_size as usize).div_ceil(0x1000);
             let phys_addr =
                 boot::allocate_pages(AllocateType::AnyPages, MemoryType::LOADER_DATA, pages)
@@ -146,14 +165,17 @@ fn main() -> Status {
             let segment_slice =
                 unsafe { slice::from_raw_parts_mut(phys_addr.as_ptr(), pages * 0x1000) };
 
+            // Copy data from file
             let start = offset as usize;
             let end = start + file_size as usize;
             segment_slice[..file_size as usize].copy_from_slice(&kernel_data[start..end]);
 
+            // Zero out remaining memory (BSS section)
             if mem_size > file_size {
                 segment_slice[file_size as usize..mem_size as usize].fill(0);
             }
 
+            // Map the segment in page tables
             let start_page = Page::<Size4KiB>::containing_address(VirtAddr::new(virt_addr));
             let end_page =
                 Page::<Size4KiB>::containing_address(VirtAddr::new(virt_addr + mem_size - 1));
@@ -180,11 +202,12 @@ fn main() -> Status {
         }
     }
 
+    // Set up Stack in Higher Half
     const KERNEL_BASE: u64 = 0xffffffff80000000;
     const STACK_TOP: u64 = KERNEL_BASE - 0x1000;
 
     let stack_start = VirtAddr::new(STACK_TOP);
-    let stack_size = 20 * 1024;
+    let stack_size = 20 * 1024; // 20 KB stack
     let stack_bottom = stack_start - stack_size;
     let stack_bottom_page = Page::<Size4KiB>::containing_address(stack_bottom);
     let stack_top_page = Page::<Size4KiB>::containing_address(stack_start - 1u64);
@@ -208,6 +231,7 @@ fn main() -> Status {
         }
     }
 
+    // Prepare Memory Map arguments for Kernel
     let desc_size = {
         let mmap = boot::memory_map(MemoryType::LOADER_DATA).expect("Failed to get temp mmap");
         let mut entries = mmap.entries();
@@ -218,6 +242,7 @@ fn main() -> Status {
 
     let mmap_storage = boot::memory_map(MemoryType::LOADER_DATA).expect("Failed to get memory map");
 
+    // Detect maximum physical memory
     let mut max_phys_addr = 0;
 
     for descriptor in mmap_storage.entries() {
@@ -230,6 +255,7 @@ fn main() -> Status {
         }
     }
 
+    // Align to 2MB
     max_phys_addr = (max_phys_addr + 0x1fffff) & !0x1fffff;
 
     info!(
@@ -238,6 +264,7 @@ fn main() -> Status {
         max_phys_addr / 1024 / 1024
     );
 
+    // Map all physical memory to Higher Half (HHDM)
     const HHDM_OFFSET: u64 = 0xffff_8000_0000_0000;
 
     let start_frame = PhysFrame::<Size2MiB>::containing_address(PhysAddr::new(0));
@@ -262,6 +289,9 @@ fn main() -> Status {
 
     info!("HHDM mapped successfully!");
 
+    // Identity Map the current running code
+    // This is needed because when we switch cr3, the CPU needs to still be able to fetch the next instruction
+    // before we jump to higher half.
     let current_rip: u64;
     unsafe { core::arch::asm!("lea {}, [rip]", out(reg) current_rip) };
 
@@ -290,8 +320,11 @@ fn main() -> Status {
         }
     }
 
+    // EXIT BOOT SERVICES
+    // After this point, we cannot use UEFI functions anymore!
     let mmap = unsafe { boot::exit_boot_services(Some(MemoryType::LOADER_DATA)) };
 
+    // Get final memory map info
     let mmap_addr_phys = mmap
         .entries()
         .next()
@@ -302,19 +335,25 @@ fn main() -> Status {
     let pml4_phys = pml4_frame.start_address().as_u64();
     let stack_top = stack_start.as_u64();
 
+    // Jump to Kernel
     unsafe {
+        // Disable interrupts (just in case)
         x86_64::instructions::interrupts::disable();
 
+        // Switch to our new Page Table (CR3)
+        // Switch Stack Pointer (RSP)
+        // Jump to Kernel Entry Point
         core::arch::asm!(
             "mov cr3, {pml4}",
             "mov rsp, {stack}",
-            "xor rbp, rbp",
+            "xor rbp, rbp", // Clear RBP for stack tracing
             "jmp {entry}",
 
             pml4 = in(reg) pml4_phys,
             stack = in(reg) stack_top,
             entry = in(reg) entry_point,
 
+            // Pass arguments to kernel (System V AMD64 ABI: RDI, RSI, RDX, RCX, R8, R9)
             in("rdi") mmap_addr_phys,
             in("rsi") mmap_len,
             in("rdx") desc_size,
@@ -326,6 +365,7 @@ fn main() -> Status {
     }
 }
 
+// Panic Handler for Bootloader
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     panic_handler_impl(info)
