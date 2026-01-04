@@ -35,12 +35,12 @@ lazy_static! {
 
 struct Selectors {
     code_selector: SegmentSelector,
-    data_selector: SegmentSelector, 
+    data_selector: SegmentSelector,
     tss_selector: SegmentSelector,
 }
 
 pub fn init() {
-    use x86_64::instructions::segmentation::{CS, DS, ES, SS, Segment}; 
+    use x86_64::instructions::segmentation::{CS, DS, ES, SS, Segment};
     use x86_64::instructions::tables::load_tss;
 
     GDT.0.load();

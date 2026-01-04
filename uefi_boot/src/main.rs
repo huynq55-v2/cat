@@ -98,7 +98,6 @@ fn main() -> Status {
     let entry_point = elf.header.pt2.entry_point();
     info!("ELF Entry point: {:#x}", entry_point);
 
-
     const PAGE_TABLE_POOL_SIZE: usize = 1024;
 
     let pool_addr = boot::allocate_pages(
@@ -187,7 +186,7 @@ fn main() -> Status {
     const STACK_TOP: u64 = KERNEL_BASE - 0x1000;
 
     let stack_start = VirtAddr::new(STACK_TOP);
-    let stack_size = 20 * 1024; 
+    let stack_size = 20 * 1024;
     let stack_bottom = stack_start - stack_size;
     let stack_bottom_page = Page::<Size4KiB>::containing_address(stack_bottom);
     let stack_top_page = Page::<Size4KiB>::containing_address(stack_start - 1u64);
@@ -210,7 +209,6 @@ fn main() -> Status {
                 .flush();
         }
     }
-
 
     let desc_size = {
         let mmap = boot::memory_map(MemoryType::LOADER_DATA).expect("Failed to get temp mmap");
@@ -266,7 +264,6 @@ fn main() -> Status {
 
     info!("HHDM mapped successfully!");
 
-
     let current_rip: u64;
     unsafe { core::arch::asm!("lea {}, [rip]", out(reg) current_rip) };
 
@@ -287,7 +284,7 @@ fn main() -> Status {
                 .map_to(
                     page,
                     frame,
-                    PageTableFlags::PRESENT | PageTableFlags::WRITABLE, 
+                    PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
                     &mut frame_allocator,
                 )
                 .ok()
@@ -311,10 +308,10 @@ fn main() -> Status {
         x86_64::instructions::interrupts::disable();
 
         core::arch::asm!(
-            "mov cr3, {pml4}",      
-            "mov rsp, {stack}",     
-            "xor rbp, rbp",         
-            "jmp {entry}",          
+            "mov cr3, {pml4}",
+            "mov rsp, {stack}",
+            "xor rbp, rbp",
+            "jmp {entry}",
 
             pml4 = in(reg) pml4_phys,
             stack = in(reg) stack_top,

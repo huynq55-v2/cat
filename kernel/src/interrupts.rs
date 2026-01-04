@@ -2,7 +2,7 @@ use crate::gdt;
 use lazy_static::lazy_static;
 use pic8259::ChainedPics;
 use shared::helpers::hlt_loop;
-use shared::{serial_print, serial_println}; 
+use shared::{serial_print, serial_println};
 use spin::Mutex;
 use x86_64::instructions::interrupts;
 use x86_64::instructions::port::Port;
@@ -98,7 +98,6 @@ pub fn init_idt() {
     IDT.load();
 }
 
-
 extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
     serial_println!("EXCEPTION: BREAKPOINT\n{:#?}", stack_frame);
 }
@@ -127,7 +126,7 @@ extern "x86-interrupt" fn general_protection_fault_handler(
     error_code: u64,
 ) {
     serial_println!("EXCEPTION: GENERAL PROTECTION FAULT");
-    serial_println!("Error Code: {:#x}", error_code); 
+    serial_println!("Error Code: {:#x}", error_code);
     serial_println!("{:#?}", stack_frame);
     hlt_loop();
 }
@@ -143,8 +142,8 @@ extern "x86-interrupt" fn stack_segment_fault_handler(
 }
 
 pub fn init_timer() {
-    let mut port_43 = Port::new(0x43); 
-    let mut port_40 = Port::new(0x40); 
+    let mut port_43 = Port::new(0x43);
+    let mut port_40 = Port::new(0x40);
 
     let divisor = 59659u16;
 
@@ -160,7 +159,7 @@ pub static mut TICKS: u64 = 0;
 
 extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
     unsafe {
-        TICKS += 1; 
+        TICKS += 1;
     }
     PICS.notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
 }

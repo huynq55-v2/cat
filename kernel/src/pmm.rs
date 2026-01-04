@@ -40,7 +40,6 @@ impl MemoryDescriptor {
     }
 }
 
-
 unsafe impl Send for BitmapPmm {}
 
 struct BitmapPmm {
@@ -168,7 +167,6 @@ impl BitmapPmm {
         }
     }
 }
-
 
 pub fn init(
     mmap_addr_phys: u64,

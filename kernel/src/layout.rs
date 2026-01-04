@@ -1,6 +1,6 @@
 pub const HHDM_OFFSET: u64 = 0xFFFF_8000_0000_0000;
 
 pub const HEAP_START: u64 = 0xFFFF_9000_0000_0000;
-pub const HEAP_SIZE: usize = 100 * 1024; 
+pub const HEAP_SIZE: usize = 100 * 1024;
 
 pub const KERNEL_BASE: u64 = 0xFFFF_FFFF_8000_0000;

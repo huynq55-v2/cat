@@ -34,7 +34,6 @@ pub extern "C" fn _start(
 
     serial_println!("PICS initialized.");
 
-
     pmm::init(
         mmap_addr_phys,
         mmap_len,
@@ -76,7 +75,7 @@ pub extern "C" fn _start(
 
         if current_ticks > last_tick && current_ticks % 20 == 0 {
             serial_print!(".");
-            last_tick = current_ticks; 
+            last_tick = current_ticks;
         }
 
         match scancode {

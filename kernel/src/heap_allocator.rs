@@ -4,7 +4,7 @@ use linked_list_allocator::Heap;
 use spin::Mutex;
 use x86_64::{
     VirtAddr,
-    instructions::interrupts, 
+    instructions::interrupts,
     structures::paging::{
         FrameAllocator, Mapper, Page, PageTableFlags, Size4KiB, mapper::MapToError,
     },
