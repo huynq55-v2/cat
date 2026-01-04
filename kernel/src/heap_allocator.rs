@@ -4,7 +4,7 @@ use linked_list_allocator::Heap;
 use spin::Mutex;
 use x86_64::{
     VirtAddr,
-    instructions::interrupts, // Import module interrupts
+    instructions::interrupts, 
     structures::paging::{
         FrameAllocator, Mapper, Page, PageTableFlags, Size4KiB, mapper::MapToError,
     },
@@ -14,27 +14,20 @@ use crate::layout::HEAP_SIZE;
 use crate::layout::HEAP_START;
 use shared::serial_println;
 
-// --- 1. TẠO WRAPPER AN TOÀN VỚI NGẮT ---
-// Thay vì dùng LockedHeap có sẵn, ta tự định nghĩa để kiểm soát việc lock
 pub struct SafeLockedHeap(Mutex<Heap>);
 
 impl SafeLockedHeap {
-    /// Tạo một heap rỗng
     pub const fn empty() -> Self {
         Self(Mutex::new(Heap::empty()))
     }
 
-    /// Khởi tạo vùng nhớ cho heap
     pub unsafe fn init(&self, start_addr: usize, size: usize) {
-        // Bắt buộc tắt ngắt khi init để an toàn (dù thường init chạy lúc chưa có ngắt)
         interrupts::without_interrupts(|| unsafe {
             self.0.lock().init(start_addr as *mut u8, size);
         });
     }
 }
 
-// --- 2. IMPLEMENT GLOBAL ALLOCATOR ---
-// Đây là nơi phép màu xảy ra: Mỗi lần alloc/dealloc đều tắt ngắt trước!
 unsafe impl GlobalAlloc for SafeLockedHeap {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         interrupts::without_interrupts(|| {
@@ -57,11 +50,9 @@ unsafe impl GlobalAlloc for SafeLockedHeap {
     }
 }
 
-// Đăng ký Allocator của chúng ta
 #[global_allocator]
 static ALLOCATOR: SafeLockedHeap = SafeLockedHeap::empty();
 
-// --- 3. HÀM INIT CŨ (Cập nhật gọi hàm init mới) ---
 pub fn init_heap(
     mapper: &mut impl Mapper<Size4KiB>,
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
@@ -91,7 +82,6 @@ pub fn init_heap(
         }
     }
 
-    // GỌI HÀM INIT CỦA WRAPPER
     unsafe {
         ALLOCATOR.init(HEAP_START as usize, HEAP_SIZE);
     }

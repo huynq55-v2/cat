@@ -14,7 +14,6 @@ mod pmm;
 
 extern crate alloc;
 
-// --- 2. ENTRY POINT ---
 #[unsafe(no_mangle)]
 pub extern "C" fn _start(
     mmap_addr_phys: u64,
@@ -25,23 +24,17 @@ pub extern "C" fn _start(
 ) -> ! {
     serial_println!("Hello from Kernel!");
 
-    // 1. Init GDT & TSS
     gdt::init();
     serial_println!("GDT & TSS initialized.");
 
-    // 2. Init Interrupts (IDT)
     interrupts::init_idt();
     serial_println!("IDT initialized.");
 
-    // 3. Init PICS (Hardware Interrupts)
     interrupts::PICS.initialize();
 
     serial_println!("PICS initialized.");
 
-    // [FIX 1] KHÔNG bật ngắt ở đây! Vì Heap chưa có.
-    // x86_64::instructions::interrupts::enable(); <--- XÓA DÒNG NÀY
 
-    // 4. Init Memory (PMM & Paging)
     pmm::init(
         mmap_addr_phys,
         mmap_len,
@@ -55,12 +48,10 @@ pub extern "C" fn _start(
     interrupts::init_timer();
     serial_println!("PIT Timer initialized.");
 
-    // 5. Init Heap
     heap_allocator::init_heap(&mut mapper, &mut frame_allocator)
         .expect("Heap initialization failed");
     serial_println!("Heap is ready!");
 
-    // [FIX 1] Bật ngắt ở đây mới an toàn (Heap đã sẵn sàng cho VecDeque)
     x86_64::instructions::interrupts::enable();
     serial_println!("Interrupts enabled!");
 
@@ -72,37 +63,26 @@ pub extern "C" fn _start(
         HandleControl::Ignore,
     );
 
-    // Biến lưu thời điểm lần in cuối cùng để tránh in trùng lặp
     let mut last_tick = 0;
 
-    // VÒNG LẶP CHÍNH (Consumer)
     loop {
-        // Tắt ngắt trước khi kiểm tra Buffer
         x86_64::instructions::interrupts::disable();
 
-        // Lấy scancode từ Buffer tĩnh (Hàm mới trong interrupts.rs)
         let scancode = interrupts::pop_scancode();
 
-        // [QUAN TRỌNG] Dùng read_volatile để bắt buộc CPU đọc lại giá trị từ RAM
-        // Nếu không, Compiler có thể tự ý "tối ưu" và nghĩ rằng TICKS không bao giờ đổi.
         let current_ticks = unsafe { core::ptr::read_volatile(&raw const interrupts::TICKS) };
 
-        // Bật lại ngắt
         x86_64::instructions::interrupts::enable();
 
-        // 3. XỬ LÝ TIMER (LOGIC MỚI)
-        // Chỉ in khi thời gian ĐÃ THAY ĐỔI và chạm mốc mỗi giây (20 ticks)
         if current_ticks > last_tick && current_ticks % 20 == 0 {
             serial_print!(".");
-            last_tick = current_ticks; // Cập nhật mốc để không in lại lần nữa trong tick này
+            last_tick = current_ticks; 
         }
 
         match scancode {
             Some(code) => {
-                // Có phím -> Bật lại ngắt ngay để xử lý
                 x86_64::instructions::interrupts::enable();
 
-                // Xử lý PC-Keyboard
                 if let Ok(Some(key_event)) = keyboard.add_byte(code) {
                     if let Some(key) = keyboard.process_keyevent(key_event) {
                         match key {
@@ -113,7 +93,6 @@ pub extern "C" fn _start(
                 }
             }
             None => {
-                // Không có phím -> Ngủ (Bật ngắt + Hlt nguyên tử)
                 x86_64::instructions::interrupts::enable_and_hlt();
             }
         }

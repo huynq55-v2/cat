@@ -6,7 +6,6 @@ use x86_64::structures::paging::{FrameAllocator, PhysFrame, Size4KiB};
 
 pub const PAGE_SIZE: u64 = 4096;
 
-// --- 1. MEMORY DESCRIPTOR (Chuyển từ main sang đây) ---
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct MemoryDescriptor {
@@ -41,9 +40,7 @@ impl MemoryDescriptor {
     }
 }
 
-// --- 2. BITMAP PMM INTERNAL ---
 
-// Khẳng định Send để dùng được trong Mutex
 unsafe impl Send for BitmapPmm {}
 
 struct BitmapPmm {
@@ -53,8 +50,6 @@ struct BitmapPmm {
     bitmap_start_addr: u64,
 }
 
-// Static Mutex bảo vệ PMM (Private, không pub ra ngoài)
-// Để bắt buộc mọi người phải dùng qua các hàm wrapper an toàn
 static PMM: Mutex<BitmapPmm> = Mutex::new(BitmapPmm {
     bitmap: core::ptr::null_mut(),
     total_frames: 0,
@@ -63,7 +58,6 @@ static PMM: Mutex<BitmapPmm> = Mutex::new(BitmapPmm {
 });
 
 impl BitmapPmm {
-    // Logic khởi tạo nội bộ (Giữ nguyên logic của bạn)
     unsafe fn init_internal(
         &mut self,
         mmap_addr_phys: u64,
@@ -78,7 +72,6 @@ impl BitmapPmm {
         self.bitmap_size_u64 = (self.total_frames + 63) / 64;
         let bitmap_size_bytes = self.bitmap_size_u64 * 8;
 
-        // Tìm vùng nhớ cho Bitmap
         let mut bitmap_phys_addr = u64::MAX;
         for i in 0..mmap_len {
             let addr = mmap_addr_virt + (i * desc_size);
@@ -99,10 +92,8 @@ impl BitmapPmm {
         self.bitmap_start_addr = bitmap_phys_addr;
         self.bitmap = (bitmap_phys_addr + hhdm_offset) as *mut u64;
 
-        // Fill toàn bộ là USED (0xFF)
         core::ptr::write_bytes(self.bitmap, 0xFF, bitmap_size_bytes);
 
-        // Mark Conventional là FREE
         for i in 0..mmap_len {
             let addr = mmap_addr_virt + (i * desc_size);
             let desc = unsafe { &*(addr as *const MemoryDescriptor) };
@@ -111,11 +102,9 @@ impl BitmapPmm {
             }
         }
 
-        // Mark lại vùng Bitmap là USED
         let bitmap_pages = (bitmap_size_bytes + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
         self.mark_region_used(bitmap_phys_addr, bitmap_pages);
 
-        // Mark Frame 0 là USED
         self.mark_used(0);
     }
 
@@ -124,7 +113,6 @@ impl BitmapPmm {
             for idx in 0..self.bitmap_size_u64 {
                 let entry = *self.bitmap.add(idx);
                 if entry != !0 {
-                    // Nếu chưa full (khác 0xFFFFFF...)
                     let inverted = !entry;
                     let bit_idx = inverted.trailing_zeros();
                     let frame_idx = (idx * 64) + bit_idx as usize;
@@ -148,7 +136,6 @@ impl BitmapPmm {
         }
     }
 
-    // Helpers
     unsafe fn mark_used(&mut self, frame_idx: usize) {
         let word_idx = frame_idx / 64;
         let bit_idx = frame_idx % 64;
@@ -182,7 +169,6 @@ impl BitmapPmm {
     }
 }
 
-// --- 3. PUBLIC API (SAFE WRAPPERS) ---
 
 pub fn init(
     mmap_addr_phys: u64,
@@ -193,8 +179,6 @@ pub fn init(
 ) {
     serial_println!("[PMM] Init started...");
 
-    // Init chạy lúc boot, chưa có ngắt nên lock thường là đủ.
-    // Nhưng để nhất quán, ta cứ dùng lock() trực tiếp.
     unsafe {
         PMM.lock().init_internal(
             mmap_addr_phys,
@@ -209,7 +193,6 @@ pub fn init(
 }
 
 pub fn allocate_frame() -> Option<u64> {
-    // QUAN TRỌNG: Tắt ngắt -> Lấy khóa -> Alloc -> Bật ngắt
     interrupts::without_interrupts(|| PMM.lock().allocate_frame_internal())
 }
 
@@ -219,7 +202,6 @@ pub fn free_frame(phys_addr: u64) {
     })
 }
 
-// Wrapper cho x86_64 FrameAllocator trait
 pub struct KernelFrameAllocator;
 
 unsafe impl FrameAllocator<Size4KiB> for KernelFrameAllocator {

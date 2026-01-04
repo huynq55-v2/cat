@@ -23,14 +23,10 @@ lazy_static! {
     static ref GDT: (GlobalDescriptorTable, Selectors) = {
         let mut gdt = GlobalDescriptorTable::new();
 
-        // 1. Kernel Code Segment (Index 1)
         let code_selector = gdt.append(Descriptor::kernel_code_segment());
 
-        // 2. [MỚI] Kernel Data Segment (Index 2)
-        // Đây là cái chúng ta thiếu! Để thay thế cho cái 0x30 cũ kỹ của Bootloader
         let data_selector = gdt.append(Descriptor::kernel_data_segment());
 
-        // 3. TSS Segment (Index 3 & 4 - vì TSS 64bit tốn 2 slot)
         let tss_selector = gdt.append(Descriptor::tss_segment(&TSS));
 
         (gdt, Selectors { code_selector, data_selector, tss_selector })
@@ -39,27 +35,23 @@ lazy_static! {
 
 struct Selectors {
     code_selector: SegmentSelector,
-    data_selector: SegmentSelector, // [MỚI]
+    data_selector: SegmentSelector, 
     tss_selector: SegmentSelector,
 }
 
 pub fn init() {
-    use x86_64::instructions::segmentation::{CS, DS, ES, SS, Segment}; // Import thêm DS, ES, SS
+    use x86_64::instructions::segmentation::{CS, DS, ES, SS, Segment}; 
     use x86_64::instructions::tables::load_tss;
 
     GDT.0.load();
 
     unsafe {
-        // Nạp Code Segment
         CS::set_reg(GDT.1.code_selector);
 
-        // [QUAN TRỌNG] Nạp lại Data Segments & Stack Segment
-        // Để CPU quên đi cái 0x30 cũ và dùng Selector mới hợp lệ của chúng ta
         SS::set_reg(GDT.1.data_selector);
         DS::set_reg(GDT.1.data_selector);
         ES::set_reg(GDT.1.data_selector);
 
-        // Nạp TSS
         load_tss(GDT.1.tss_selector);
     }
 }
