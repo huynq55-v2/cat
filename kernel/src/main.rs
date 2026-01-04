@@ -1,52 +1,18 @@
 #![no_std]
 #![no_main]
+#![feature(abi_x86_interrupt)]
 
-// Giả sử bạn đã có macro serial_println! từ shared library hoặc module
-use shared::{panic::panic_handler_impl, serial_println};
+use pc_keyboard::{DecodedKey, HandleControl, Keyboard, ScancodeSet1, layouts};
+use shared::{panic::panic_handler_impl, serial_print, serial_println};
+
 mod gdt;
 mod heap_allocator;
+mod interrupts;
 mod layout;
 mod pml4;
 mod pmm;
-mod spinlock;
 
 extern crate alloc;
-
-// --- 1. ĐỊNH NGHĨA LẠI CẤU TRÚC UEFI (Chuẩn C) ---
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct MemoryDescriptor {
-    pub type_: u32,      // Loại bộ nhớ (BootServicesCode, Conventional, etc.)
-    pub pad: u32,        // Padding (quan trọng để alignment đúng)
-    pub phys_start: u64, // Địa chỉ vật lý
-    pub virt_start: u64, // Địa chỉ ảo (thường bằng phys_start trong UEFI)
-    pub page_count: u64, // Số lượng trang (4KB mỗi trang)
-    pub attribute: u64,  // Thuộc tính (Read/Write/Exec...)
-}
-
-// Helper để in tên loại bộ nhớ cho dễ đọc
-impl MemoryDescriptor {
-    pub fn type_name(&self) -> &'static str {
-        match self.type_ {
-            0 => "Reserved",
-            1 => "LoaderCode",
-            2 => "LoaderData",
-            3 => "BootServicesCode",
-            4 => "BootServicesData",
-            5 => "RuntimeServicesCode",
-            6 => "RuntimeServicesData",
-            7 => "ConventionalMemory", // <-- Đây là RAM trống bạn dùng được!
-            8 => "UnusableMemory",
-            9 => "ACPIReclaimMemory",
-            10 => "ACPIMemoryNVS",
-            11 => "MemoryMappedIO",
-            12 => "MemoryMappedIOPortSpace",
-            13 => "PalCode",
-            14 => "PersistentMemory",
-            _ => "Unknown",
-        }
-    }
-}
 
 // --- 2. ENTRY POINT ---
 #[unsafe(no_mangle)]
@@ -57,59 +23,25 @@ pub extern "C" fn _start(
     hhdm_offset: u64,
     max_phys_addr: u64,
 ) -> ! {
-    serial_println!("Hello from Kernel with Spinlock PMM!");
-    serial_println!("HHDM Offset: {:#x}", hhdm_offset);
-    serial_println!("--------------------------------------------------");
-    let mmap_addr_virt = mmap_addr_phys + hhdm_offset;
-    serial_println!(
-        "MMap Virtual Address: {:#x}, Length: {}, Descriptor Size: {}",
-        mmap_addr_virt,
-        mmap_len,
-        desc_size
-    );
+    serial_println!("Hello from Kernel!");
 
-    // 1. Init GDT & TSS (Nên làm sớm nhất có thể)
+    // 1. Init GDT & TSS
     gdt::init();
-
     serial_println!("GDT & TSS initialized.");
-    let mut usable_pages = 0;
-    let mut total_pages = 0;
 
-    // --- 3. DUYỆT MEMORY MAP ---
-    for i in 0..mmap_len {
-        // TÍNH TOÁN ĐỊA CHỈ:
-        // Địa chỉ của phần tử thứ i = Base + (i * desc_size)
-        // Lưu ý: Phải dùng arithmetic trên u64 hoặc ép kiểu sang *const u8 để cộng byte.
-        let addr = mmap_addr_virt + (i * desc_size);
+    // 2. Init Interrupts (IDT)
+    interrupts::init_idt();
+    serial_println!("IDT initialized.");
 
-        // Ép kiểu địa chỉ đó thành con trỏ MemoryDescriptor
-        let desc = unsafe { &*(addr as *const MemoryDescriptor) };
+    // 3. Init PICS (Hardware Interrupts)
+    interrupts::PICS.initialize();
 
-        serial_println!(
-            "Region {:3}: [{:#016x} - {:#016x}] {:20} ({} pages)",
-            i,
-            desc.phys_start,
-            desc.phys_start + (desc.page_count * 4096),
-            desc.type_name(),
-            desc.page_count
-        );
+    serial_println!("PICS initialized.");
 
-        // Thống kê bộ nhớ
-        total_pages += desc.page_count;
-        if desc.type_ == 7 {
-            // ConventionalMemory
-            usable_pages += desc.page_count;
-        }
-    }
+    // [FIX 1] KHÔNG bật ngắt ở đây! Vì Heap chưa có.
+    // x86_64::instructions::interrupts::enable(); <--- XÓA DÒNG NÀY
 
-    serial_println!("--------------------------------------------------");
-    serial_println!("Total Memory: {} MB", (total_pages * 4096) / 1024 / 1024);
-    serial_println!(
-        "Free RAM (Usable): {} MB",
-        (usable_pages * 4096) / 1024 / 1024
-    );
-
-    // 1. Init (Cần unsafe vì thao tác raw pointer bên trong init)
+    // 4. Init Memory (PMM & Paging)
     pmm::init(
         mmap_addr_phys,
         mmap_len,
@@ -117,25 +49,74 @@ pub extern "C" fn _start(
         hhdm_offset,
         max_phys_addr,
     );
-
     let mut frame_allocator = pmm::KernelFrameAllocator;
     let mut mapper = unsafe { pml4::init_mapper(hhdm_offset) };
 
+    interrupts::init_timer();
+    serial_println!("PIT Timer initialized.");
+
+    // 5. Init Heap
     heap_allocator::init_heap(&mut mapper, &mut frame_allocator)
         .expect("Heap initialization failed");
-
     serial_println!("Heap is ready!");
 
-    use alloc::vec::Vec;
-    serial_println!("Testing Vec...");
-    let mut v = Vec::new();
-    v.push(1);
-    v.push(2);
-    v.push(3);
-    serial_println!("Vec content: {:?}", v);
+    // [FIX 1] Bật ngắt ở đây mới an toàn (Heap đã sẵn sàng cho VecDeque)
+    x86_64::instructions::interrupts::enable();
+    serial_println!("Interrupts enabled!");
 
+    serial_println!("System Ready. Try typing on QEMU window...");
+
+    let mut keyboard = Keyboard::new(
+        ScancodeSet1::new(),
+        layouts::Us104Key,
+        HandleControl::Ignore,
+    );
+
+    // Biến lưu thời điểm lần in cuối cùng để tránh in trùng lặp
+    let mut last_tick = 0;
+
+    // VÒNG LẶP CHÍNH (Consumer)
     loop {
-        unsafe { core::arch::asm!("hlt") }
+        // Tắt ngắt trước khi kiểm tra Buffer
+        x86_64::instructions::interrupts::disable();
+
+        // Lấy scancode từ Buffer tĩnh (Hàm mới trong interrupts.rs)
+        let scancode = interrupts::pop_scancode();
+
+        // [QUAN TRỌNG] Dùng read_volatile để bắt buộc CPU đọc lại giá trị từ RAM
+        // Nếu không, Compiler có thể tự ý "tối ưu" và nghĩ rằng TICKS không bao giờ đổi.
+        let current_ticks = unsafe { core::ptr::read_volatile(&raw const interrupts::TICKS) };
+
+        // Bật lại ngắt
+        x86_64::instructions::interrupts::enable();
+
+        // 3. XỬ LÝ TIMER (LOGIC MỚI)
+        // Chỉ in khi thời gian ĐÃ THAY ĐỔI và chạm mốc mỗi giây (20 ticks)
+        if current_ticks > last_tick && current_ticks % 20 == 0 {
+            serial_print!(".");
+            last_tick = current_ticks; // Cập nhật mốc để không in lại lần nữa trong tick này
+        }
+
+        match scancode {
+            Some(code) => {
+                // Có phím -> Bật lại ngắt ngay để xử lý
+                x86_64::instructions::interrupts::enable();
+
+                // Xử lý PC-Keyboard
+                if let Ok(Some(key_event)) = keyboard.add_byte(code) {
+                    if let Some(key) = keyboard.process_keyevent(key_event) {
+                        match key {
+                            DecodedKey::Unicode(character) => serial_print!("{}", character),
+                            DecodedKey::RawKey(key) => serial_print!("{:?}", key),
+                        }
+                    }
+                }
+            }
+            None => {
+                // Không có phím -> Ngủ (Bật ngắt + Hlt nguyên tử)
+                x86_64::instructions::interrupts::enable_and_hlt();
+            }
+        }
     }
 }
 

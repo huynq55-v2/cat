@@ -46,7 +46,7 @@ This document tracks the **actual** implemented features of the OS based on the 
 ## Roadmap / Next Steps
 
 ### Immediate Priorities
-- [ ] **IDT (Interrupt Descriptor Table)**: Implement Exception Handlers (Page Fault, General Protection, etc.) and Hardware Interrupts (Timer, Keyboard).
+- [x] **IDT (Interrupt Descriptor Table)**: Implement Exception Handlers (Page Fault, General Protection, etc.) and Hardware Interrupts (Timer, Keyboard).
 - [ ] **VGA / Framebuffer Driver**: Implement a screen driver (GOP-based Framebuffer or VGA Text Mode) for visual output.
 
 ### Future

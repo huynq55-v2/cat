@@ -3,68 +3,63 @@ use x86_64::VirtAddr;
 use x86_64::structures::gdt::{Descriptor, GlobalDescriptorTable, SegmentSelector};
 use x86_64::structures::tss::TaskStateSegment;
 
-// 1. Định nghĩa chỉ số cho IST (Interrupt Stack Table)
-// Chúng ta sẽ dùng index 0 cho Double Fault
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
 
-// 2. Tạo TSS (Task State Segment)
 lazy_static! {
     static ref TSS: TaskStateSegment = {
         let mut tss = TaskStateSegment::new();
-
-        // Cấp phát một vùng nhớ làm Stack riêng cho Double Fault
-        // Kích thước stack: 20KB (4096 * 5)
         tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = {
             const STACK_SIZE: usize = 4096 * 5;
             static mut STACK: [u8; STACK_SIZE] = [0; STACK_SIZE];
-
-            // Vì STACK là static mut, truy cập nó là unsafe
-            // Nhưng vì ta dùng lazy_static nên nó chỉ chạy 1 lần lúc init -> An toàn
-            let stack_start = VirtAddr::from_ptr(&raw const STACK);
+            let stack_start = VirtAddr::from_ptr(unsafe { &raw const STACK });
             let stack_end = stack_start + STACK_SIZE as u64;
-
-            // Stack trong x86 mọc từ cao xuống thấp, nên trả về địa chỉ cuối (đỉnh stack)
             stack_end
         };
         tss
     };
 }
 
-// 3. Tạo GDT (Global Descriptor Table)
 lazy_static! {
     static ref GDT: (GlobalDescriptorTable, Selectors) = {
         let mut gdt = GlobalDescriptorTable::new();
 
-        // Thêm các Segment chuẩn của Kernel
+        // 1. Kernel Code Segment (Index 1)
         let code_selector = gdt.append(Descriptor::kernel_code_segment());
+
+        // 2. [MỚI] Kernel Data Segment (Index 2)
+        // Đây là cái chúng ta thiếu! Để thay thế cho cái 0x30 cũ kỹ của Bootloader
+        let data_selector = gdt.append(Descriptor::kernel_data_segment());
+
+        // 3. TSS Segment (Index 3 & 4 - vì TSS 64bit tốn 2 slot)
         let tss_selector = gdt.append(Descriptor::tss_segment(&TSS));
 
-        // (Kernel Data Segment được thêm mặc định hoặc không cần thiết trong 64-bit nếu không dùng FS/GS)
-
-        (gdt, Selectors { code_selector, tss_selector })
+        (gdt, Selectors { code_selector, data_selector, tss_selector })
     };
 }
 
-// Struct helper để lưu các Selector (cần dùng để load vào thanh ghi CS, TR)
 struct Selectors {
     code_selector: SegmentSelector,
+    data_selector: SegmentSelector, // [MỚI]
     tss_selector: SegmentSelector,
 }
 
-// 4. Hàm Init (Public) để gọi từ main.rs
 pub fn init() {
-    use x86_64::instructions::segmentation::{CS, Segment};
+    use x86_64::instructions::segmentation::{CS, DS, ES, SS, Segment}; // Import thêm DS, ES, SS
     use x86_64::instructions::tables::load_tss;
 
-    // Load GDT vào CPU
     GDT.0.load();
 
     unsafe {
-        // Nạp lại Code Segment (CS)
-        // Bắt buộc để CPU biết chúng ta đang chạy với GDT mới
+        // Nạp Code Segment
         CS::set_reg(GDT.1.code_selector);
 
-        // Load TSS (Task Register)
+        // [QUAN TRỌNG] Nạp lại Data Segments & Stack Segment
+        // Để CPU quên đi cái 0x30 cũ và dùng Selector mới hợp lệ của chúng ta
+        SS::set_reg(GDT.1.data_selector);
+        DS::set_reg(GDT.1.data_selector);
+        ES::set_reg(GDT.1.data_selector);
+
+        // Nạp TSS
         load_tss(GDT.1.tss_selector);
     }
 }

@@ -41,7 +41,8 @@ mkdir -p esp/efi/boot
 cp target/x86_64-unknown-uefi/release/uefi_boot.efi esp/efi/boot/bootx64.efi
 cp target/x86_64-unknown-none/release/kernel esp/kernel
 
-qemu-system-x86_64 -enable-kvm \
+qemu-system-x86_64 \
+    -enable-kvm \
     -m 512M \
     -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE_4M.fd \
     -drive if=pflash,format=raw,readonly=on,file=OVMF_VARS_4M.fd \

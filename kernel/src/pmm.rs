@@ -1,25 +1,61 @@
-use crate::MemoryDescriptor;
-use crate::spinlock::Spinlock;
 use shared::serial_println;
+use spin::Mutex;
 use x86_64::PhysAddr;
+use x86_64::instructions::interrupts;
 use x86_64::structures::paging::{FrameAllocator, PhysFrame, Size4KiB};
 
 pub const PAGE_SIZE: u64 = 4096;
 
-// Khẳng định với Rust rằng BitmapPmm có thể chuyển giao giữa các luồng một cách an toàn.
-// Chúng ta được phép làm điều này vì quyền truy cập đã được bảo vệ bởi Spinlock.
+// --- 1. MEMORY DESCRIPTOR (Chuyển từ main sang đây) ---
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct MemoryDescriptor {
+    pub type_: u32,
+    pub pad: u32,
+    pub phys_start: u64,
+    pub virt_start: u64,
+    pub page_count: u64,
+    pub attribute: u64,
+}
+
+impl MemoryDescriptor {
+    pub fn type_name(&self) -> &'static str {
+        match self.type_ {
+            0 => "Reserved",
+            1 => "LoaderCode",
+            2 => "LoaderData",
+            3 => "BootServicesCode",
+            4 => "BootServicesData",
+            5 => "RuntimeServicesCode",
+            6 => "RuntimeServicesData",
+            7 => "ConventionalMemory",
+            8 => "UnusableMemory",
+            9 => "ACPIReclaimMemory",
+            10 => "ACPIMemoryNVS",
+            11 => "MemoryMappedIO",
+            12 => "MemoryMappedIOPortSpace",
+            13 => "PalCode",
+            14 => "PersistentMemory",
+            _ => "Unknown",
+        }
+    }
+}
+
+// --- 2. BITMAP PMM INTERNAL ---
+
+// Khẳng định Send để dùng được trong Mutex
 unsafe impl Send for BitmapPmm {}
 
-pub struct BitmapPmm {
+struct BitmapPmm {
     bitmap: *mut u64,
     total_frames: usize,
     bitmap_size_u64: usize,
     bitmap_start_addr: u64,
 }
 
-// Thay static mut bằng static với Spinlock
-// Khởi tạo const an toàn
-pub static PMM: Spinlock<BitmapPmm> = Spinlock::new(BitmapPmm {
+// Static Mutex bảo vệ PMM (Private, không pub ra ngoài)
+// Để bắt buộc mọi người phải dùng qua các hàm wrapper an toàn
+static PMM: Mutex<BitmapPmm> = Mutex::new(BitmapPmm {
     bitmap: core::ptr::null_mut(),
     total_frames: 0,
     bitmap_size_u64: 0,
@@ -27,11 +63,8 @@ pub static PMM: Spinlock<BitmapPmm> = Spinlock::new(BitmapPmm {
 });
 
 impl BitmapPmm {
-    /// Hàm khởi tạo PMM hoàn chỉnh
-    /// - mmap_addr_phys: Địa chỉ vật lý của Memory Map (từ Bootloader)
-    /// - hhdm_offset: Offset của vùng Higher Half Direct Map
-    /// - max_phys_addr: MaxPhysAddr (từ Bootloader)
-    pub unsafe fn init(
+    // Logic khởi tạo nội bộ (Giữ nguyên logic của bạn)
+    unsafe fn init_internal(
         &mut self,
         mmap_addr_phys: u64,
         mmap_len: u64,
@@ -39,97 +72,59 @@ impl BitmapPmm {
         hhdm_offset: u64,
         max_phys_addr: u64,
     ) {
-        serial_println!("[PMM] Init started...");
-
         let mmap_addr_virt = mmap_addr_phys + hhdm_offset;
 
-        // 1. Tính toán kích thước Bitmap
         self.total_frames = (max_phys_addr / PAGE_SIZE) as usize;
         self.bitmap_size_u64 = (self.total_frames + 63) / 64;
         let bitmap_size_bytes = self.bitmap_size_u64 * 8;
 
-        serial_println!(
-            "[PMM] Total frames: {}, Bitmap size: {} bytes",
-            self.total_frames,
-            bitmap_size_bytes
-        );
-
-        // 2. Tìm vùng nhớ để đặt Bitmap
-        // Khởi tạo bằng giá trị bất hợp lý để phân biệt với địa chỉ 0
+        // Tìm vùng nhớ cho Bitmap
         let mut bitmap_phys_addr = u64::MAX;
-
-        shared::serial_println!("[PMM] Scanning {} regions for bitmap space...", mmap_len);
-
         for i in 0..mmap_len {
             let addr = mmap_addr_virt + (i * desc_size);
             let desc = unsafe { &*(addr as *const MemoryDescriptor) };
-
-            // Chỉ tìm Conventional và BỎ QUA địa chỉ 0 (để tránh lỗi logic và an toàn hơn)
             if desc.type_ == 7 && desc.phys_start != 0 {
                 let region_size = desc.page_count * PAGE_SIZE;
-
-                // Debug log gọn hơn
-                // shared::serial_println!("[DEBUG] Candidate: {:#x}, Size: {}", desc.phys_start, region_size);
-
                 if region_size >= bitmap_size_bytes as u64 {
                     bitmap_phys_addr = desc.phys_start;
-                    shared::serial_println!(
-                        "[PMM] Found suitable region at {:#x}",
-                        bitmap_phys_addr
-                    );
                     break;
                 }
             }
         }
 
-        // Kiểm tra nếu không tìm thấy (vẫn là giá trị MAX)
         if bitmap_phys_addr == u64::MAX {
             panic!("PMM: Critical - No RAM for Bitmap!");
         }
 
-        serial_println!("[PMM] Placing Bitmap at phys: {:#x}", bitmap_phys_addr);
-
         self.bitmap_start_addr = bitmap_phys_addr;
         self.bitmap = (bitmap_phys_addr + hhdm_offset) as *mut u64;
 
-        // --- CHIẾN THUẬT MỚI: WHITELIST ---
+        // Fill toàn bộ là USED (0xFF)
+        core::ptr::write_bytes(self.bitmap, 0xFF, bitmap_size_bytes);
 
-        // 3. FILL TOÀN BỘ BITMAP LÀ 0xFF (USED/BUSY)
-        // Mặc định coi như toàn bộ RAM là "Không dùng được" hoặc "Không tồn tại"
-        serial_println!("[PMM] Filling bitmap with 0xFF (Mark All Used)...");
-        unsafe { core::ptr::write_bytes(self.bitmap, 0xFF, bitmap_size_bytes) };
-
-        // 4. CHỈ KHAI BÁO CÁC VÙNG CONVENTIONAL LÀ FREE
-        serial_println!("[PMM] Scanning mmap to free Conventional Memory...");
+        // Mark Conventional là FREE
         for i in 0..mmap_len {
             let addr = mmap_addr_virt + (i * desc_size);
             let desc = unsafe { &*(addr as *const MemoryDescriptor) };
-
             if desc.type_ == 7 {
-                // Chỉ quan tâm Conventional
                 self.mark_region_free(desc.phys_start, desc.page_count as usize);
             }
         }
 
-        // 5. Đánh dấu USED cho chính vùng nhớ chứa Bitmap
-        // (Vì bước 4 đã lỡ tay free nó rồi, giờ phải lock lại)
+        // Mark lại vùng Bitmap là USED
         let bitmap_pages = (bitmap_size_bytes + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
         self.mark_region_used(bitmap_phys_addr, bitmap_pages);
 
-        // 6. Đánh dấu USED cho Frame 0
-        unsafe { self.mark_used(0) };
-
-        // Không cần bước xử lý Padding nữa vì ta đã fill 0xFF từ đầu rồi!
-
-        serial_println!("[PMM] Init finished successfully!");
+        // Mark Frame 0 là USED
+        self.mark_used(0);
     }
 
-    // Logic tìm trang trống (Internal)
     fn allocate_frame_internal(&mut self) -> Option<u64> {
         unsafe {
             for idx in 0..self.bitmap_size_u64 {
                 let entry = *self.bitmap.add(idx);
                 if entry != !0 {
+                    // Nếu chưa full (khác 0xFFFFFF...)
                     let inverted = !entry;
                     let bit_idx = inverted.trailing_zeros();
                     let frame_idx = (idx * 64) + bit_idx as usize;
@@ -146,7 +141,6 @@ impl BitmapPmm {
         None
     }
 
-    // Logic giải phóng (Internal)
     fn free_frame_internal(&mut self, phys_addr: u64) {
         let frame_idx = (phys_addr / PAGE_SIZE) as usize;
         unsafe {
@@ -154,8 +148,7 @@ impl BitmapPmm {
         }
     }
 
-    // --- HELPERS ---
-
+    // Helpers
     unsafe fn mark_used(&mut self, frame_idx: usize) {
         let word_idx = frame_idx / 64;
         let bit_idx = frame_idx % 64;
@@ -180,7 +173,6 @@ impl BitmapPmm {
     fn mark_region_free(&mut self, start_addr: u64, page_count: usize) {
         let start_frame = (start_addr / PAGE_SIZE) as usize;
         for i in 0..page_count {
-            // Kiểm tra bounds check để tránh crash nếu UEFI báo láo
             if start_frame + i < self.total_frames {
                 unsafe {
                     self.mark_free(start_frame + i);
@@ -190,8 +182,7 @@ impl BitmapPmm {
     }
 }
 
-// --- PUBLIC API ---
-// Đây là các hàm wrapper để bên ngoài gọi dễ dàng mà không cần quan tâm Spinlock
+// --- 3. PUBLIC API (SAFE WRAPPERS) ---
 
 pub fn init(
     mmap_addr_phys: u64,
@@ -200,9 +191,12 @@ pub fn init(
     hhdm_offset: u64,
     max_phys_addr: u64,
 ) {
-    // Lock PMM và gọi hàm init bên trong
+    serial_println!("[PMM] Init started...");
+
+    // Init chạy lúc boot, chưa có ngắt nên lock thường là đủ.
+    // Nhưng để nhất quán, ta cứ dùng lock() trực tiếp.
     unsafe {
-        PMM.lock().init(
+        PMM.lock().init_internal(
             mmap_addr_phys,
             mmap_len,
             desc_size,
@@ -210,21 +204,26 @@ pub fn init(
             max_phys_addr,
         )
     };
+
+    serial_println!("[PMM] Init finished!");
 }
 
 pub fn allocate_frame() -> Option<u64> {
-    PMM.lock().allocate_frame_internal()
+    // QUAN TRỌNG: Tắt ngắt -> Lấy khóa -> Alloc -> Bật ngắt
+    interrupts::without_interrupts(|| PMM.lock().allocate_frame_internal())
 }
 
 pub fn free_frame(phys_addr: u64) {
-    PMM.lock().free_frame_internal(phys_addr);
+    interrupts::without_interrupts(|| {
+        PMM.lock().free_frame_internal(phys_addr);
+    })
 }
 
+// Wrapper cho x86_64 FrameAllocator trait
 pub struct KernelFrameAllocator;
 
 unsafe impl FrameAllocator<Size4KiB> for KernelFrameAllocator {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
-        // Gọi chính hàm allocate_frame() mà bạn đã test thành công!
         crate::pmm::allocate_frame().map(|phys| PhysFrame::containing_address(PhysAddr::new(phys)))
     }
 }

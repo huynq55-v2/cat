@@ -1,11 +1,10 @@
 use core::panic::PanicInfo;
 
 pub fn panic_handler_impl(_info: &PanicInfo) -> ! {
-    // Write to serial port
     #[cfg(feature = "serial")]
     {
-        use crate::serial_println;
-        serial_println!("[PANIC]: {}", _info);
+        // Dùng hàm in riêng, không dùng serial_println! thường
+        crate::serial::print_panic(format_args!("PANIC OCCURRED: {}\n", _info));
     }
 
     loop {
