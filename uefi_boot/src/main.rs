@@ -76,7 +76,7 @@ fn main() -> Status {
 
     info!("Kernel file size: {} bytes", file_size);
 
-    let pages_needed = (file_size as usize + 0xfff) / 0x1000;
+    let pages_needed = (file_size as usize).div_ceil(0x1000);
 
     let file_buffer_addr = boot::allocate_pages(
         AllocateType::AnyPages,
@@ -138,7 +138,7 @@ fn main() -> Status {
                 virt_addr, mem_size, file_size
             );
 
-            let pages = (mem_size as usize + 0xfff) / 0x1000;
+            let pages = (mem_size as usize).div_ceil(0x1000);
             let phys_addr =
                 boot::allocate_pages(AllocateType::AnyPages, MemoryType::LOADER_DATA, pages)
                     .expect("Failed to allocate pages for segment");
@@ -151,9 +151,7 @@ fn main() -> Status {
             segment_slice[..file_size as usize].copy_from_slice(&kernel_data[start..end]);
 
             if mem_size > file_size {
-                for i in file_size as usize..mem_size as usize {
-                    segment_slice[i] = 0;
-                }
+                segment_slice[file_size as usize..mem_size as usize].fill(0);
             }
 
             let start_page = Page::<Size4KiB>::containing_address(VirtAddr::new(virt_addr));

@@ -82,12 +82,12 @@ pub extern "C" fn _start(
             Some(code) => {
                 x86_64::instructions::interrupts::enable();
 
-                if let Ok(Some(key_event)) = keyboard.add_byte(code) {
-                    if let Some(key) = keyboard.process_keyevent(key_event) {
-                        match key {
-                            DecodedKey::Unicode(character) => serial_print!("{}", character),
-                            DecodedKey::RawKey(key) => serial_print!("{:?}", key),
-                        }
+                if let Ok(Some(key_event)) = keyboard.add_byte(code)
+                    && let Some(key) = keyboard.process_keyevent(key_event)
+                {
+                    match key {
+                        DecodedKey::Unicode(character) => serial_print!("{}", character),
+                        DecodedKey::RawKey(key) => serial_print!("{:?}", key),
                     }
                 }
             }

@@ -17,29 +17,6 @@ pub struct MemoryDescriptor {
     pub attribute: u64,
 }
 
-impl MemoryDescriptor {
-    pub fn type_name(&self) -> &'static str {
-        match self.type_ {
-            0 => "Reserved",
-            1 => "LoaderCode",
-            2 => "LoaderData",
-            3 => "BootServicesCode",
-            4 => "BootServicesData",
-            5 => "RuntimeServicesCode",
-            6 => "RuntimeServicesData",
-            7 => "ConventionalMemory",
-            8 => "UnusableMemory",
-            9 => "ACPIReclaimMemory",
-            10 => "ACPIMemoryNVS",
-            11 => "MemoryMappedIO",
-            12 => "MemoryMappedIOPortSpace",
-            13 => "PalCode",
-            14 => "PersistentMemory",
-            _ => "Unknown",
-        }
-    }
-}
-
 unsafe impl Send for BitmapPmm {}
 
 struct BitmapPmm {
@@ -65,46 +42,48 @@ impl BitmapPmm {
         hhdm_offset: u64,
         max_phys_addr: u64,
     ) {
-        let mmap_addr_virt = mmap_addr_phys + hhdm_offset;
+        unsafe {
+            let mmap_addr_virt = mmap_addr_phys + hhdm_offset;
 
-        self.total_frames = (max_phys_addr / PAGE_SIZE) as usize;
-        self.bitmap_size_u64 = (self.total_frames + 63) / 64;
-        let bitmap_size_bytes = self.bitmap_size_u64 * 8;
+            self.total_frames = (max_phys_addr / PAGE_SIZE) as usize;
+            self.bitmap_size_u64 = self.total_frames.div_ceil(64);
+            let bitmap_size_bytes = self.bitmap_size_u64 * 8;
 
-        let mut bitmap_phys_addr = u64::MAX;
-        for i in 0..mmap_len {
-            let addr = mmap_addr_virt + (i * desc_size);
-            let desc = unsafe { &*(addr as *const MemoryDescriptor) };
-            if desc.type_ == 7 && desc.phys_start != 0 {
-                let region_size = desc.page_count * PAGE_SIZE;
-                if region_size >= bitmap_size_bytes as u64 {
-                    bitmap_phys_addr = desc.phys_start;
-                    break;
+            let mut bitmap_phys_addr = u64::MAX;
+            for i in 0..mmap_len {
+                let addr = mmap_addr_virt + (i * desc_size);
+                let desc = &*(addr as *const MemoryDescriptor);
+                if desc.type_ == 7 && desc.phys_start != 0 {
+                    let region_size = desc.page_count * PAGE_SIZE;
+                    if region_size >= bitmap_size_bytes as u64 {
+                        bitmap_phys_addr = desc.phys_start;
+                        break;
+                    }
                 }
             }
-        }
 
-        if bitmap_phys_addr == u64::MAX {
-            panic!("PMM: Critical - No RAM for Bitmap!");
-        }
-
-        self.bitmap_start_addr = bitmap_phys_addr;
-        self.bitmap = (bitmap_phys_addr + hhdm_offset) as *mut u64;
-
-        core::ptr::write_bytes(self.bitmap, 0xFF, bitmap_size_bytes);
-
-        for i in 0..mmap_len {
-            let addr = mmap_addr_virt + (i * desc_size);
-            let desc = unsafe { &*(addr as *const MemoryDescriptor) };
-            if desc.type_ == 7 {
-                self.mark_region_free(desc.phys_start, desc.page_count as usize);
+            if bitmap_phys_addr == u64::MAX {
+                panic!("PMM: Critical - No RAM for Bitmap!");
             }
+
+            self.bitmap_start_addr = bitmap_phys_addr;
+            self.bitmap = (bitmap_phys_addr + hhdm_offset) as *mut u64;
+
+            core::ptr::write_bytes(self.bitmap, 0xFF, bitmap_size_bytes);
+
+            for i in 0..mmap_len {
+                let addr = mmap_addr_virt + (i * desc_size);
+                let desc = &*(addr as *const MemoryDescriptor);
+                if desc.type_ == 7 {
+                    self.mark_region_free(desc.phys_start, desc.page_count as usize);
+                }
+            }
+
+            let bitmap_pages = bitmap_size_bytes.div_ceil(PAGE_SIZE as usize);
+            self.mark_region_used(bitmap_phys_addr, bitmap_pages);
+
+            self.mark_used(0);
         }
-
-        let bitmap_pages = (bitmap_size_bytes + PAGE_SIZE as usize - 1) / PAGE_SIZE as usize;
-        self.mark_region_used(bitmap_phys_addr, bitmap_pages);
-
-        self.mark_used(0);
     }
 
     fn allocate_frame_internal(&mut self) -> Option<u64> {
@@ -126,13 +105,6 @@ impl BitmapPmm {
             }
         }
         None
-    }
-
-    fn free_frame_internal(&mut self, phys_addr: u64) {
-        let frame_idx = (phys_addr / PAGE_SIZE) as usize;
-        unsafe {
-            self.mark_free(frame_idx);
-        }
     }
 
     unsafe fn mark_used(&mut self, frame_idx: usize) {
@@ -192,12 +164,6 @@ pub fn init(
 
 pub fn allocate_frame() -> Option<u64> {
     interrupts::without_interrupts(|| PMM.lock().allocate_frame_internal())
-}
-
-pub fn free_frame(phys_addr: u64) {
-    interrupts::without_interrupts(|| {
-        PMM.lock().free_frame_internal(phys_addr);
-    })
 }
 
 pub struct KernelFrameAllocator;

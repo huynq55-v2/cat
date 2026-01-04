@@ -2,7 +2,7 @@ use crate::gdt;
 use lazy_static::lazy_static;
 use pic8259::ChainedPics;
 use shared::helpers::hlt_loop;
-use shared::{serial_print, serial_println};
+use shared::serial_println;
 use spin::Mutex;
 use x86_64::instructions::interrupts;
 use x86_64::instructions::port::Port;
@@ -21,9 +21,6 @@ pub enum InterruptIndex {
 impl InterruptIndex {
     fn as_u8(self) -> u8 {
         self as u8
-    }
-    fn as_usize(self) -> usize {
-        self as usize
     }
 }
 
@@ -78,14 +75,17 @@ lazy_static! {
 
         idt.breakpoint.set_handler_fn(breakpoint_handler);
         unsafe {
-            idt.double_fault.set_handler_fn(double_fault_handler)
+            idt.double_fault
+                .set_handler_fn(double_fault_handler)
                 .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
         }
         idt.page_fault.set_handler_fn(page_fault_handler);
 
-        idt.general_protection_fault.set_handler_fn(general_protection_fault_handler);
+        idt.general_protection_fault
+            .set_handler_fn(general_protection_fault_handler);
 
-        idt.stack_segment_fault.set_handler_fn(stack_segment_fault_handler);
+        idt.stack_segment_fault
+            .set_handler_fn(stack_segment_fault_handler);
 
         idt[InterruptIndex::Timer.as_u8()].set_handler_fn(timer_interrupt_handler);
         idt[InterruptIndex::Keyboard.as_u8()].set_handler_fn(keyboard_interrupt_handler);
@@ -165,7 +165,6 @@ extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFr
 }
 
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
-
     let mut port = Port::new(0x60);
     let scancode: u8 = unsafe { port.read() };
 

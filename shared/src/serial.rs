@@ -20,7 +20,6 @@ pub fn _print(args: ::core::fmt::Arguments) {
         let mut serial = SERIAL1.lock();
 
         serial.write_fmt(args).expect("Printing to serial failed");
-
     });
 }
 

@@ -1,5 +1,5 @@
 use core::alloc::{GlobalAlloc, Layout};
-use core::ptr::null_mut;
+
 use linked_list_allocator::Heap;
 use spin::Mutex;
 use x86_64::{
@@ -36,7 +36,7 @@ unsafe impl GlobalAlloc for SafeLockedHeap {
                 .allocate_first_fit(layout)
                 .ok()
                 .map(|ptr| ptr.as_ptr())
-                .unwrap_or(null_mut())
+                .unwrap_or_default()
         })
     }
 
@@ -58,7 +58,7 @@ pub fn init_heap(
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
 ) -> Result<(), MapToError<Size4KiB>> {
     let page_range = {
-        let heap_start = VirtAddr::new(HEAP_START as u64);
+        let heap_start = VirtAddr::new(HEAP_START);
         let heap_end = heap_start + HEAP_SIZE as u64 - 1u64;
         let heap_start_page = Page::containing_address(heap_start);
         let heap_end_page = Page::containing_address(heap_end);
@@ -71,7 +71,7 @@ pub fn init_heap(
         HEAP_SIZE
     );
 
-    for (i, page) in page_range.enumerate() {
+    for page in page_range {
         let frame = frame_allocator
             .allocate_frame()
             .ok_or(MapToError::FrameAllocationFailed)?;
