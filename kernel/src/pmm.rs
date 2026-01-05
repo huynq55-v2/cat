@@ -1,5 +1,4 @@
 // Import necessary modules
-use shared::serial_println;
 use spin::Mutex;
 use x86_64::PhysAddr;
 use x86_64::instructions::interrupts;
@@ -179,7 +178,7 @@ pub fn init(
     hhdm_offset: u64,
     max_phys_addr: u64,
 ) {
-    serial_println!("[PMM] Init started...");
+    println!("[PMM] Init started...");
 
     unsafe {
         PMM.lock().init_internal(
@@ -191,7 +190,7 @@ pub fn init(
         )
     };
 
-    serial_println!("[PMM] Init finished!");
+    println!("[PMM] Init finished!");
 }
 
 // Public allocation function

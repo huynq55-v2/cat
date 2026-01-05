@@ -3,7 +3,6 @@ use crate::gdt;
 use lazy_static::lazy_static;
 use pic8259::ChainedPics;
 use shared::helpers::hlt_loop;
-use shared::serial_println;
 use spin::Mutex;
 use x86_64::instructions::interrupts;
 use x86_64::instructions::port::Port;
@@ -130,7 +129,7 @@ pub fn init_idt() {
 
 // Handler for Breakpoint Exception
 extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
-    serial_println!("EXCEPTION: BREAKPOINT\n{:#?}", stack_frame);
+    println!("EXCEPTION: BREAKPOINT\n{:#?}", stack_frame);
 }
 
 // Handler for Double Fault Exception
@@ -149,11 +148,11 @@ extern "x86-interrupt" fn page_fault_handler(
     error_code: PageFaultErrorCode,
 ) {
     use x86_64::registers::control::Cr2;
-    serial_println!("EXCEPTION: PAGE FAULT");
+    println!("EXCEPTION: PAGE FAULT");
     // CR2 register contains the virtual address that caused the fault
-    serial_println!("Accessed Address: {:?}", Cr2::read());
-    serial_println!("Error Code: {:?}", error_code);
-    serial_println!("{:#?}", stack_frame);
+    println!("Accessed Address: {:?}", Cr2::read());
+    println!("Error Code: {:?}", error_code);
+    println!("{:#?}", stack_frame);
     // Halt the system as we cannot recover
     hlt_loop();
 }
@@ -163,9 +162,9 @@ extern "x86-interrupt" fn general_protection_fault_handler(
     stack_frame: InterruptStackFrame,
     error_code: u64,
 ) {
-    serial_println!("EXCEPTION: GENERAL PROTECTION FAULT");
-    serial_println!("Error Code: {:#x}", error_code);
-    serial_println!("{:#?}", stack_frame);
+    println!("EXCEPTION: GENERAL PROTECTION FAULT");
+    println!("Error Code: {:#x}", error_code);
+    println!("{:#?}", stack_frame);
     hlt_loop();
 }
 
@@ -174,9 +173,9 @@ extern "x86-interrupt" fn stack_segment_fault_handler(
     stack_frame: InterruptStackFrame,
     error_code: u64,
 ) {
-    serial_println!("EXCEPTION: STACK SEGMENT FAULT");
-    serial_println!("Error Code: {:#x}", error_code);
-    serial_println!("{:#?}", stack_frame);
+    println!("EXCEPTION: STACK SEGMENT FAULT");
+    println!("Error Code: {:#x}", error_code);
+    println!("{:#?}", stack_frame);
     hlt_loop();
 }
 

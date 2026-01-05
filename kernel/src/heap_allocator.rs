@@ -13,7 +13,6 @@ use x86_64::{
 
 use crate::layout::HEAP_SIZE;
 use crate::layout::HEAP_START;
-use shared::serial_println;
 
 // Wrapper around the allocator to make it thread-safe using a spinlock
 pub struct SafeLockedHeap(Mutex<Heap>);
@@ -78,10 +77,9 @@ pub fn init_heap(
         Page::range_inclusive(heap_start_page, heap_end_page)
     };
 
-    serial_println!(
+    println!(
         "Initializing Heap at {:#x} (Size: {} Bytes)",
-        HEAP_START,
-        HEAP_SIZE
+        HEAP_START, HEAP_SIZE
     );
 
     // Map all pages in the heap range
@@ -104,6 +102,6 @@ pub fn init_heap(
         ALLOCATOR.init(HEAP_START as usize, HEAP_SIZE);
     }
 
-    serial_println!("Heap initialized successfully with Interrupt Safety!");
+    println!("Heap initialized successfully with Interrupt Safety!");
     Ok(())
 }

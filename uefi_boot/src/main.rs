@@ -4,10 +4,12 @@
 // Imports
 use core::slice;
 use log::info;
+use shared::framebuffer::{FrameBufferInfo, PixelFormat};
 use shared::panic::panic_handler_impl;
 use uefi::boot::{AllocateType, MemoryType};
 use uefi::mem::memory_map::MemoryMap;
 use uefi::prelude::*;
+use uefi::proto::console::gop::{GraphicsOutput, PixelFormat as UefiPixelFormat};
 use uefi::proto::media::file::{File, FileAttribute, FileInfo, FileMode};
 use x86_64::structures::paging::{
     FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PageTableFlags, PhysFrame, Size2MiB,
@@ -320,20 +322,133 @@ fn main() -> Status {
         }
     }
 
+    // ========================================================================
+    // 1. SETUP GRAPHICS OUTPUT PROTOCOL (GOP)
+    // ========================================================================
+    info!("Initializing GOP...");
+    let gop_handle =
+        boot::get_handle_for_protocol::<GraphicsOutput>().expect("Failed to get GOP handle");
+    let mut gop = boot::open_protocol_exclusive::<GraphicsOutput>(gop_handle)
+        .expect("Failed to open GOP protocol");
+
+    let mode_info = gop.current_mode_info();
+    let mut frame_buffer = gop.frame_buffer();
+
+    let fb_phys_addr = frame_buffer.as_mut_ptr() as u64;
+    let fb_size = frame_buffer.size();
+
+    let fb_width = mode_info.resolution().0;
+    let fb_height = mode_info.resolution().1;
+    let fb_stride = mode_info.stride();
+
+    // Convert UEFI PixelFormat to our shared PixelFormat
+    let fb_format = match mode_info.pixel_format() {
+        UefiPixelFormat::Rgb => PixelFormat::RGB,
+        UefiPixelFormat::Bgr => PixelFormat::BGR,
+        _ => PixelFormat::RGB, // Fallback
+    };
+
+    info!("PixelFormat: {:?}", fb_format);
+
+    info!(
+        "GOP Found: {}x{}, Stride {}, Addr {:#x}",
+        fb_width, fb_height, fb_stride, fb_phys_addr
+    );
+
+    const FRAMEBUFFER_VIRT_BASE: u64 = 0xFFFF_A000_0000_0000;
+    let fb_virt_addr = FRAMEBUFFER_VIRT_BASE;
+
+    info!(
+        "Mapping Framebuffer (NO_CACHE) from {:#x} to {:#x}",
+        fb_phys_addr, fb_virt_addr
+    );
+
+    let fb_start_frame = PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(fb_phys_addr));
+    let fb_end_frame =
+        PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(fb_phys_addr + fb_size as u64 - 1));
+
+    let mut count = 0;
+    for frame in PhysFrame::range_inclusive(fb_start_frame, fb_end_frame) {
+        let offset = frame.start_address().as_u64() - fb_phys_addr;
+
+        let page = Page::<Size4KiB>::containing_address(VirtAddr::new(fb_virt_addr + offset));
+
+        let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE;
+
+        unsafe {
+            mapper
+                .map_to(page, frame, flags, &mut frame_allocator)
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "Mapping error at frame {:#x}: {:?}",
+                        frame.start_address().as_u64(),
+                        e
+                    );
+                })
+                .ignore();
+        }
+        count += 1;
+    }
+
+    unsafe {
+        use x86_64::registers::control::Cr3;
+        let (frame, flags) = Cr3::read();
+        Cr3::write(frame, flags);
+    }
+
+    info!("Framebuffer mapped successfully! Total {} pages.", count);
+
+    // ========================================================================
+    // 3. ALLOCATE & PREPARE BOOT INFO
+    // ========================================================================
+
+    // Because bootloader is about to exit, we don't have a full Global Allocator (Box/Vec).
+    // The safest way to simulate "Heap" is to ask UEFI for a page of memory (4KiB).
+    // This page belongs to LOADER_DATA, kernel can read it later.
+    let boot_info_addr = boot::allocate_pages(
+        AllocateType::AnyPages,
+        MemoryType::LOADER_DATA,
+        1, // Ask for 1 page (4096 bytes) to store BootInfo
+    )
+    .expect("Failed to allocate memory for BootInfo");
+
+    // Cast address to mutable pointer to write BootInfo
+    let boot_info = unsafe { &mut *(boot_info_addr.as_ptr() as *mut shared::BootInfo) };
+
+    // Fill in static information (except Memory Map because we're about to exit services)
+    boot_info.hhdm_offset = HHDM_OFFSET;
+    boot_info.max_phys_memory = max_phys_addr;
+    boot_info.framebuffer = FrameBufferInfo {
+        buffer_base: fb_virt_addr, // Virtual address of mapped framebuffer
+        buffer_size: fb_size,
+        width: fb_width,
+        height: fb_height,
+        stride: fb_stride,
+        format: fb_format,
+    };
+
+    info!(
+        "BootInfo allocated at {:#x}",
+        boot_info_addr.as_ptr() as u64
+    );
+
     // EXIT BOOT SERVICES
     // After this point, we cannot use UEFI functions anymore!
     let mmap = unsafe { boot::exit_boot_services(Some(MemoryType::LOADER_DATA)) };
 
     // Get final memory map info
-    let mmap_addr_phys = mmap
+    boot_info.memory_map_addr = mmap
         .entries()
         .next()
         .map(|d| d as *const _ as u64)
         .unwrap_or(0);
-    let mmap_len = mmap.entries().len() as u64;
+    boot_info.memory_map_len = mmap.entries().len() as u64;
+    boot_info.memory_map_desc_size = desc_size;
 
     let pml4_phys = pml4_frame.start_address().as_u64();
     let stack_top = stack_start.as_u64();
+    let boot_info_phys = boot_info_addr.as_ptr() as u64;
+    let boot_info_virt = boot_info_phys + HHDM_OFFSET;
 
     // Jump to Kernel
     unsafe {
@@ -354,11 +469,7 @@ fn main() -> Status {
             entry = in(reg) entry_point,
 
             // Pass arguments to kernel (System V AMD64 ABI: RDI, RSI, RDX, RCX, R8, R9)
-            in("rdi") mmap_addr_phys,
-            in("rsi") mmap_len,
-            in("rdx") desc_size,
-            in("rcx") HHDM_OFFSET,
-            in("r8") max_phys_addr,
+            in("rdi") boot_info_virt,
 
             options(noreturn)
         );

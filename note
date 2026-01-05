@@ -142,3 +142,5 @@ Các bước thực hiện:
     Lazy Static: Vì GDT và TSS phải tồn tại suốt đời chương trình, chúng ta dùng lazy_static để khởi tạo chúng.
 
     Load: Dùng lệnh assembly (qua wrapper của Rust) để nạp GDT và TSS vào thanh ghi CPU.
+===============================================================================
+Check format code: cargo check va cargo clippy
