@@ -209,3 +209,83 @@ THE HOBBY KERNEL MANIFESTO
     Giai đoạn "Đa nhiệm": clone, futex (Rust std hoàn chỉnh).
 
     GHI NHỚ: Panic là la bàn. Log là bản đồ. Musl là chân lý.
+===============================================================================
+MANIFESTO: LA BÀN VÀ BẢN ĐỒ
+
+"Panic là la bàn, Log là bản đồ." Đây không phải triết lý sáo rỗng. Đây là bài học được viết bằng hàng trăm giờ debug trong tuyệt vọng.
+1. ĐỊNH NGHĨA SỰ SỐNG CÒN
+
+LA BÀN (PANIC): SỰ TỪ CHỐI TUYỆT ĐỐI Panic không phải là lỗi. Panic là phanh khẩn cấp. Nó hét lên: "Mày đang đi vào vùng đất chết." Khi Kernel gặp thứ nó không hiểu (Flag lạ, Struct sai, Pointer rác):
+
+    KHÔNG đoán mò.
+
+    KHÔNG lờ đi.
+
+    KHÔNG return -EINVAL. 👉 PANIC NGAY LẬP TỨC. Chặn đứng cái sai trước khi nó di căn.
+
+BẢN ĐỒ (LOG): HỘP ĐEN CỦA MÁY BAY Log không phải tin rác. Log là bằng chứng pháp y. Nó trả lời câu hỏi sinh tử: Ai gọi? Gọi lúc nào? Trước đó đã làm gì? Một dòng log vô giá trị ngàn vàng: [PID:3] mmap(0, 8k, RW, ANON) -> 0x7f...
+2. BI KỊCH CỦA SỰ THIẾU HỤT
+
+    Có Panic - Mất Log: Bạn biết mình đã chết, nhưng không biết ai bắn mình. (Mù lòa).
+
+        Kết quả: panic: mmap unsupported. Hết.
+
+    Có Log - Mất Panic: Bạn nhìn thấy mình lao xuống vực, từng bước một, nhưng không phanh lại. (Tự sát từ từ).
+
+        Kết quả: Kernel vẫn chạy → Bộ nhớ nát bét → Crash ngẫu nhiên 5 phút sau.
+
+3. LUẬT SINH TỒN: TRĂNG TRỐI RỒI MỚI CHẾT
+
+QUY TẮC VÀNG: Đừng bao giờ Panic trong im lặng. Hãy ghi lại hiện trường trước khi bóp cò.
+
+// 1. Ghi lại hiện trường (Bản đồ)
+log("FATAL: mmap called with unsupported flags=%lx at addr=%p", flags, addr);
+
+// 2. Kết liễu (La bàn)
+if (flags & UNSUPPORTED) {
+    panic("ABORT: Kernel too dumb to handle this flag");
+}
+
+4. PHÂN CẤP CỦA SỰ SAI LẦM
+
+Đừng nhầm lẫn giữa Lỗi của User và Sự ngu dốt của Kernel.
+
+    LEVEL 1: HARD PANIC (Kernel Dev sai)
+
+        Gặp Flag ABI chưa implement? → PANIC.
+
+        Gặp Alignment sai quy tắc? → PANIC.
+
+        Tại sao? Vì code của bạn chưa đủ trình độ xử lý. Thừa nhận và sửa nó.
+
+    LEVEL 2: SOFT FAIL (User Space sai)
+
+        File descriptor đóng rồi vẫn gọi? → return -EINVAL.
+
+        Quyền truy cập sai? → return -EACCES.
+
+        Tại sao? Đây là hành vi đúng của Linux.
+
+5. LỜI TUYÊN THỆ CỦA KERNEL DEV
+
+    "Log cho bạn ký ức. Panic cho bạn lương tâm."
+
+    Kernel chạy tiếp không có nghĩa là Kernel đúng.
+
+    Kernel Crash sớm là Kernel trung thực.
+
+    Thiếu một trong hai, bạn chỉ là kẻ mộng du trong đống code assembly.
+
+6. MỆNH LỆNH HÀNH ĐỘNG (RIGHT NOW)
+
+Đừng chờ đợi. Ngay bây giờ:
+
+    Log mọi Syscall (Entry & Exit).
+
+    Panic mọi Flag bạn chưa support.
+
+    Panic mọi Struct bạn chưa validate.
+
+    Dùng musl làm thước đo sự thật.
+
+Thà Crash đau đớn một lần còn hơn chạy sai mãi mãi.
