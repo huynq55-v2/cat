@@ -144,3 +144,68 @@ Các bước thực hiện:
     Load: Dùng lệnh assembly (qua wrapper của Rust) để nạp GDT và TSS vào thanh ghi CPU.
 ===============================================================================
 Check format code: cargo check va cargo clippy
+===============================================================================
+THE HOBBY KERNEL MANIFESTO
+💀 PART I: PANIC & LOG OR DIE TRYING
+
+1. Tại sao Kernel Hobby phải Panic? Linux có hàng triệu user, nó không được phép sập. Bạn chỉ có 1 user (là chính bạn).
+
+    Linux: Chấp nhận lờ đi lỗi (return -EINVAL) để giữ uptime.
+
+    Bạn: Bug = Sự thiếu hiểu biết về ABI. Nếu lờ đi → Bug lan truyền → Không thể debug.
+
+    Luật: Panic sớm = Cắt nhiễm trùng.
+
+2. Nguyên tắc "Biên giới ABI" Bất cứ thứ gì từ User-space ném vào Kernel đều là Untrusted.
+
+    Pointer, Struct, Flag, Syscall args → ASSERT / PANIC NGAY LẬP TỨC NẾU SAI.
+
+    Đừng return -EINVAL. Hãy panic("mmap: unsupported flag XYZ").
+
+    Kernel chết mà có thông tin > Kernel sống mà vô nghĩa.
+
+3. Log Everything Debug ABI mà không log = Mò kim đáy bể. Log phải như "Camera an ninh":
+
+    [PID:TID] SYSCALL(args) -> RETURN [errno]
+
+    Log cả: VM mappings, Signal, Context switch.
+
+⚖️ PART II: MUSL IS THE LAW
+
+1. Musl là Oracle
+
+    Không có PDF nào chuẩn hơn code của Musl.
+
+    Musl crash → Kernel sai. Đừng đổ lỗi cho Musl.
+
+    Musl không "workaround" lỗi của kernel. Nó phơi bày sự thật trần trụi.
+
+2. Quy trình "Thử lửa" (The Validation Loop)
+
+    Build static binary với musl-gcc hoặc rustc +crt-static.
+
+    Chạy trên Linux thật + strace -f → Lưu lại log chuẩn.
+
+    Chạy trên Kernel của bạn.
+
+    DIFF HAI LOG ĐÓ.
+
+🚀 PART III: ROADMAP TO RUST STD
+
+Đừng nhảy cóc. Hãy đi theo thứ tự này để giữ sanity:
+
+    Boot Phase: Paging, IDT, GDT (Chưa có user-space).
+
+    Giai đoạn "Câm": exit, write. (Hello World).
+
+    Giai đoạn "Đọc": read, openat, fstat (ELF loader).
+
+    Giai đoạn "Bộ nhớ": mmap, brk (Để malloc chạy).
+
+    Giai đoạn "Identity" (Quan trọng cho Rust): arch_prctl, fs.base (TLS setup).
+
+    Giai đoạn "Báo lỗi": rt_sigaction, Signal frame (Để Rust panic in ra stacktrace).
+
+    Giai đoạn "Đa nhiệm": clone, futex (Rust std hoàn chỉnh).
+
+    GHI NHỚ: Panic là la bàn. Log là bản đồ. Musl là chân lý.
