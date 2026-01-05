@@ -20,8 +20,8 @@ This document tracks the **actual** implemented features of the OS based on the 
 - [x] **Hardware Abstraction**:
     - **GDT & TSS**: Initialized in `src/gdt.rs` (Code Segment, TSS with Double Fault Stack).
     - **Serial Output**: Debug output via Serial Port 0x3F8 (in `shared`).
-- [ ] **Interrupts (IDT)**: Not yet implemented.
-- [ ] **VGA Text Mode**: Not yet implemented (only Serial output available).
+- [x] **Interrupts (IDT)**: Implemented using `x86_interrupt` ABI. Handles Exceptions (PF, GP) and Hardware Interrupts (Timer, Keyboard).
+- [x] **VGA / Framebuffer**: Implemented software text rendering on UEFI Framebuffer (Graphics Output Protocol).
 
 ## 3. Memory Management
 - [x] **Physical Memory (PMM)**:
