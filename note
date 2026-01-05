@@ -289,3 +289,91 @@ if (flags & UNSUPPORTED) {
     Dùng musl làm thước đo sự thật.
 
 Thà Crash đau đớn một lần còn hơn chạy sai mãi mãi.
+===============================================================================
+MINIMAL RUST TEST BINARIES (theo từng giai đoạn)
+Giai đoạn 1 — chỉ exit + write
+// hello.rs
+fn main() {
+    println!("hello");
+}
+
+
+Compile:
+
+rustc hello.rs \
+  --target x86_64-unknown-linux-musl \
+  -C target-feature=+crt-static
+
+
+Kernel cần:
+
+write
+
+exit
+
+Giai đoạn 2 — malloc + mmap
+fn main() {
+    let mut v = Vec::new();
+    for i in 0..1000 {
+        v.push(i);
+    }
+    println!("{}", v.len());
+}
+
+
+Kernel cần:
+
+mmap
+
+brk
+
+page fault
+
+Giai đoạn 3 — panic Rust (signal / abort)
+fn main() {
+    panic!("test panic");
+}
+
+
+Kernel cần:
+
+write
+
+exit
+
+(signal optional, abort OK)
+
+Giai đoạn 4 — TLS (Rust bắt đầu khó)
+thread_local! {
+    static X: u64 = 42;
+}
+
+fn main() {
+    X.with(|v| println!("{}", v));
+}
+
+
+Kernel cần:
+
+arch_prctl
+
+fs.base
+
+TLS ABI
+
+Giai đoạn 5 — Thread + futex
+use std::thread;
+
+fn main() {
+    let h = thread::spawn(|| {
+        println!("child");
+    });
+    h.join().unwrap();
+}
+
+
+Kernel cần:
+
+clone
+
+futex
