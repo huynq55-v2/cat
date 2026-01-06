@@ -728,3 +728,124 @@ match r7 {
 Repo của bạn là một nền tảng tuyệt vời. Bạn không chỉ đang "chép code", bạn đang **tổ chức** lại kiến thức của nhân loại (Linux, ELF, x86) thông qua lăng kính của Rust và sự trợ giúp của AI.
 
 Hãy bắt đầu viết bài đầu tiên về **"Bootloader và cú lừa của UEFI"** đi. Nếu cần review đoạn văn hay refactor code, cứ quăng lên đây!
+===============================================================================
+Chào bạn, "bịa chuyện" một cách logic và hợp lý chính là kỹ năng **Storytelling** (kể chuyện) trong kỹ thuật. Độc giả không cần biết chính xác ngày giờ bạn gõ phím, họ cần sự đồng cảm về quá trình tư duy.
+
+Về khái niệm **"Cú lừa của UEFI"** (The UEFI Trap):
+Ngày xưa với BIOS, ta bật máy lên, BIOS ném ta vào chế độ 16-bit (Real Mode), ta tự lo mọi thứ. Khó nhưng "thật".
+Còn UEFI thì quá "nhiệt tình". Nó bật sẵn chế độ 64-bit, bật sẵn phân trang (paging), cung cấp sẵn hàm in màn hình... Nó làm ta ảo tưởng là mọi thứ dễ dàng. Nhưng ngay khoảnh khắc ta gọi `exit_boot_services` để giành quyền kiểm soát, UEFI "rút ván" (tắt hết các dịch vụ đó). Ta bơ vơ giữa một đống địa chỉ ảo (virtual address) mà không biết nó map đi đâu. Đó chính là "cú lừa".
+
+Dưới đây là **Layout chi tiết cho Bài 1/Chương 1**, tập trung vào Bootloader và Memory Map, được "dàn dựng" lại dựa trên code thật của bạn.
+
+---
+
+# Bài 1: Bootloader - Cú lừa hào nhoáng của UEFI và "Mê cung" bộ nhớ
+
+### 1. Mở đầu: Ảo tưởng sức mạnh
+
+* **Narrative (Dẫn chuyện):**
+* Tôi bắt đầu với suy nghĩ ngây thơ: "Viết OS chắc cũng giống viết app thôi, chỉ là không có thư viện chuẩn (`std`)."
+* Tôi chọn Rust vì nghe nói nó an toàn. Tôi chọn UEFI vì BIOS đã quá cổ lỗ sĩ (năm 2024 rồi ai còn dùng đĩa mềm?).
+* Cảm giác đầu tiên: *Quá dễ!* Chỉ cần dùng crate `uefi-rs`, viết vài dòng là hiện chữ "Hello World" lên màn hình đen sì.
+
+
+* **Vấn đề:** In ra chữ thì dễ, nhưng làm sao để nạp cái Kernel (cái file ELF tôi vừa build) vào RAM để chạy? RAM nằm ở đâu? Đoạn nào trống, đoạn nào UEFI đang dùng?
+
+### 2. Cuộc hội thoại với AI (Re-enacted)
+
+* **Prompt (Giả định):** *"Này AI, làm sao để tôi biết máy tính có bao nhiêu RAM trong môi trường UEFI và vùng nào an toàn để tôi nhét Kernel vào?"*
+* **AI trả lời (Phần kiến thức):** AI giải thích về `MemoryMap`. Nó giống như một danh sách các mảnh đất:
+* `EfiConventionalMemory`: Đất trống, dùng thoải mái.
+* `EfiBootServicesCode`: Đất của UEFI, cấm động vào (lúc này).
+* `EfiRuntimeServicesData`: Đất của phần cứng, cấm tuyệt đối.
+
+
+* **AI trả lời (Phần Code - Cạm bẫy):**
+AI đưa ra một đoạn code loop qua Memory Map và in ra. Trông rất "uy tín".
+
+### 3. Cú lừa kỹ thuật: "Tại sao code lại Panic?"
+
+* **Tình huống:** Tôi copy code của AI vào. Build xong, chạy trên QEMU.
+* Kết quả: Màn hình đỏ lòm hoặc treo cứng.
+
+
+* **Phân tích (Deep Dive):**
+* UEFI Memory Map không phải là một mảng (`Vec`) cố định. Nó là một vùng nhớ động.
+* Khi bạn gọi hàm `get_memory_map`, kích thước map có thể thay đổi ngay lập tức (vì việc gọi hàm cũng tốn bộ nhớ -> sinh ra entry mới trong map -> map to ra -> buffer cũ không đủ).
+* **Bài học:** AI thường quên cái vòng lặp `retry` để cấp phát lại buffer nếu map bị thay đổi.
+
+
+* **Code thực tế (Link tới code của bạn):**
+* Bạn show đoạn xử lý `uefi_boot/src/main.rs`: Cách bạn lấy `memory_map`, lấy `map_key`.
+
+
+
+### 4. Ác mộng quản lý bộ nhớ (Physical Memory)
+
+* **Nỗi đau:** Bạn nhắc đến việc "cấp phát frame" là khó hiểu nhất. Đây là lúc giải thích nó.
+* **Giải thích bình dân:**
+* Kernel cần biết: "Cho tôi xin một trang giấy trắng (4KB) để viết nháp".
+* Nhưng UEFI đưa cho ta một cái bản đồ nát bươm (fragmented). Có đoạn trống ở địa chỉ 0x1000, có đoạn tít tận 0x8000000.
+
+
+* **Tương tác IDE:**
+* *Tip:* Tôi dùng Debugger của VS Code (hoặc in log qua Serial Port) để dump cái Memory Map ra xem.
+* *Hình ảnh:* Chụp ảnh cái log Memory Map dài dằng dặc.
+* *Quyết định:* Tôi không thể dùng cái map phức tạp này trong Kernel được. Tôi phải convert nó thành một thứ đơn giản hơn trước khi `exit_boot_services`.
+
+
+
+### 5. Khoảnh khắc "Qua cầu rút ván" (Exit Boot Services)
+
+* **Khái niệm:** Đây là điểm không thể quay đầu (Point of No Return).
+* **Code:**
+```rust
+system_table.exit_boot_services(image_handle, map_key);
+
+```
+
+
+* **Sự cố (Drama):**
+* Ngay sau dòng này, `println!` không chạy nữa. Màn hình đóng băng. Bàn phím liệt.
+* Tại sao? Vì driver bàn phím, driver màn hình đều thuộc về Boot Services. Ta vừa tắt nó rồi.
+
+
+* **Giải pháp (Dựa trên code của bạn - `framebuffer.rs`):**
+* Trước khi tắt đèn, ta phải nhanh tay copy địa chỉ của Framebuffer (VRAM) ra một tờ giấy nhớ (struct `BootInfo`).
+* Kernel sau này sẽ vẽ lên địa chỉ đó (vẽ từng pixel) thay vì in text.
+
+
+
+### 6. Kết luận chương: Bàn giao quyền lực
+
+* Ta đã load được file ELF vào vùng nhớ `CONVENTIONAL`.
+* Ta đã có bản đồ bộ nhớ (đã lọc).
+* Ta đã có địa chỉ Framebuffer để vẽ.
+* Lệnh nhảy `assembly`: Jump to Kernel Entry Point.
+* *Teasing:* Chương sau, chúng ta sẽ thấy Kernel "tỉnh dậy" và nhận ra mình đang ở giữa một đống hỗn độn mà Bootloader để lại. Làm sao để quản lý đống pixel đó? -> **Chapter 2: Hello World bằng... Pixel.**
+
+---
+
+### Gợi ý Prompt để bạn viết nội dung chi tiết:
+
+Khi bạn viết, nếu bí câu chữ, hãy quăng cái dàn ý nhỏ của mục đó cho AI (Gemini/ChatGPT) với prompt sau để nó "mớm" văn cho bạn (rồi bạn sửa lại giọng văn):
+
+> "Đóng vai một lập trình viên tay ngang đang mày mò viết OS. Hãy miêu tả cảm giác 'hoang mang' khi lần đầu tiên nhìn thấy cái Memory Map của UEFI. Nó lộn xộn và rời rạc thế nào so với bộ nhớ phẳng mà ta thường nghĩ? Dùng giọng văn hài hước, châm biếm một chút."
+
+### Kiểm tra lại với code của bạn:
+
+Trong `uefi_boot/src/main.rs` của bạn, tôi thấy bạn đã xử lý rất tốt việc load file kernel và setup `BootInfo`.
+Đoạn code này là minh chứng:
+
+```rust
+// Code của bạn
+let map_key = map.key(); // Lấy key lần cuối
+let (system_table, map) = system_table
+    .exit_boot_services(image_handle, map_key) // Nhảy cầu!
+    .expect("Failed to exit boot services");
+
+```
+
+Bạn có thể dùng chính đoạn snippet này để minh họa cho phần 5.
+
+Bạn thấy dàn ý này thế nào? Đủ "drama" chưa?
