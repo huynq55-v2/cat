@@ -71,65 +71,6 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
     heap_allocator::init_heap(&mut mapper, &mut frame_allocator)
         .expect("Heap initialization failed");
     println!("Heap is ready!");
-
-    // Enable CPU Interrupts
-    x86_64::instructions::interrupts::enable();
-    println!("Interrupts enabled!");
-
-    println!("System Ready. Try typing on QEMU window...");
-
-    // Initialize Keyboard Decoder (US Layout, Scancode Set 1)
-    let mut keyboard = Keyboard::new(
-        ScancodeSet1::new(),
-        layouts::Us104Key,
-        HandleControl::Ignore,
-    );
-
-    let mut last_tick = 0;
-
-    // Main Kernel Loop
-    loop {
-        // Disable interrupts while reading shared data (to prevent race conditions)
-        x86_64::instructions::interrupts::disable();
-
-        // Check for new scancode from interrupt handler
-        let scancode = interrupts::pop_scancode();
-
-        // Read current timer ticks safely
-        let current_ticks = unsafe { core::ptr::read_volatile(&raw const interrupts::TICKS) };
-
-        // Re-enable interrupts
-        x86_64::instructions::interrupts::enable();
-
-        // Print a dot every 20 ticks (approx 1 second)
-        if current_ticks > last_tick && current_ticks % 20 == 0 {
-            print!(".");
-            last_tick = current_ticks;
-        }
-
-        // Process scancode if available
-        match scancode {
-            Some(code) => {
-                // Ensure interrupts are enabled so we don't block
-                x86_64::instructions::interrupts::enable();
-
-                // Decode the scancode into a key event
-                if let Ok(Some(key_event)) = keyboard.add_byte(code)
-                    && let Some(key) = keyboard.process_keyevent(key_event)
-                {
-                    // Print the decoded character
-                    match key {
-                        DecodedKey::Unicode(character) => print!("{}", character),
-                        DecodedKey::RawKey(key) => print!("{:?}", key),
-                    }
-                }
-            }
-            None => {
-                // If no input, halt CPU until next interrupt (save power)
-                x86_64::instructions::interrupts::enable_and_hlt();
-            }
-        }
-    }
 }
 
 // Panic Handler
