@@ -238,3 +238,10 @@ pub fn reset_style() {
         writer.set_background_color(0x0000FF);
     }
 }
+
+// Print a single character
+pub fn print_char(c: char) {
+    if let Some(writer) = &mut *WRITER.lock() {
+        writer.write_byte(c as u8);
+    }
+}
