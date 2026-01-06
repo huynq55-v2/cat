@@ -13,7 +13,6 @@ use shared::{BootInfo, panic::panic_handler_impl};
 mod gdt;
 mod heap_allocator;
 mod interrupts;
-mod layout;
 mod pml4;
 mod pmm;
 mod screen;

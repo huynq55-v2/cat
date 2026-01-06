@@ -11,8 +11,12 @@ use x86_64::{
     },
 };
 
-use crate::layout::HEAP_SIZE;
-use crate::layout::HEAP_START;
+// Define the virtual address where the heap starts
+// We place it in the higher half memory to keep it separate from user space
+pub const KERNEL_HEAP_START: u64 = 0xFFFF_9000_0000_0000;
+
+// Define the size of the heap (100 KB)
+pub const KERNEL_HEAP_SIZE: usize = 100 * 1024;
 
 // Wrapper around the allocator to make it thread-safe using a spinlock
 pub struct SafeLockedHeap(Mutex<Heap>);
@@ -70,8 +74,8 @@ pub fn init_heap(
 ) -> Result<(), MapToError<Size4KiB>> {
     // Calculate the range of pages that the heap will cover
     let page_range = {
-        let heap_start = VirtAddr::new(HEAP_START);
-        let heap_end = heap_start + HEAP_SIZE as u64 - 1u64;
+        let heap_start = VirtAddr::new(KERNEL_HEAP_START);
+        let heap_end = heap_start + KERNEL_HEAP_SIZE as u64 - 1u64;
         let heap_start_page = Page::containing_address(heap_start);
         let heap_end_page = Page::containing_address(heap_end);
         Page::range_inclusive(heap_start_page, heap_end_page)
@@ -79,7 +83,7 @@ pub fn init_heap(
 
     println!(
         "Initializing Heap at {:#x} (Size: {} Bytes)",
-        HEAP_START, HEAP_SIZE
+        KERNEL_HEAP_START, KERNEL_HEAP_SIZE
     );
 
     // Map all pages in the heap range
@@ -99,7 +103,7 @@ pub fn init_heap(
 
     // Initialize the allocator with the mapped memory
     unsafe {
-        ALLOCATOR.init(HEAP_START as usize, HEAP_SIZE);
+        ALLOCATOR.init(KERNEL_HEAP_START as usize, KERNEL_HEAP_SIZE);
     }
 
     println!("Heap initialized successfully with Interrupt Safety!");

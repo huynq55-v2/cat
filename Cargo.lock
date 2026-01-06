@@ -50,6 +50,7 @@ dependencies = [
  "shared",
  "spin 0.10.0",
  "x86_64",
+ "xmas-elf",
 ]
 
 [[package]]

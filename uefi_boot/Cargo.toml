@@ -6,6 +6,6 @@ edition = "2024"
 [dependencies]
 uefi = { version = "0.36.1", features = [ "logger" ] }
 xmas-elf = "0.10.0"
-shared = { path = "../shared" }
+shared = { path = "../shared", features = [ "serial" ] }
 log = "0.4.29"
 x86_64 = "0.15.4"
