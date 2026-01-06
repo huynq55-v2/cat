@@ -6,16 +6,18 @@
 mod writer;
 
 // Imports
-use pc_keyboard::{DecodedKey, HandleControl, Keyboard, ScancodeSet1, layouts};
+use elf_loader::{enter_userspace, load_user_elf, setup_user_stack};
 use shared::{BootInfo, panic::panic_handler_impl};
 
 // Module Declarations
+mod elf_loader;
 mod gdt;
 mod heap_allocator;
 mod interrupts;
 mod pml4;
 mod pmm;
 mod screen;
+mod syscalls;
 
 // External Crate for Heap Allocation
 extern crate alloc;
@@ -71,6 +73,24 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
     heap_allocator::init_heap(&mut mapper, &mut frame_allocator)
         .expect("Heap initialization failed");
     println!("Heap is ready!");
+
+    unsafe {
+        syscalls::init(boot_info.hhdm_offset);
+    }
+
+    println!("Loading user ELF...");
+    // Gọi loader::load_user_elf
+    let entry_point = load_user_elf(&mut mapper, &mut frame_allocator);
+    println!("Entry point: {:#x}", entry_point.as_u64());
+
+    // Gọi loader::setup_user_stack
+    let user_stack_top = setup_user_stack(&mut mapper, &mut frame_allocator, boot_info.hhdm_offset);
+
+    println!("Entering Ring 3...");
+    // Gọi loader::enter_userspace
+    unsafe {
+        enter_userspace(entry_point, user_stack_top);
+    }
 }
 
 // Panic Handler
