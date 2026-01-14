@@ -115,7 +115,7 @@ fn main() -> Status {
 
     // Setup Page Tables
     // We allocate a pool of memory for page tables
-    const PAGE_TABLE_POOL_SIZE: usize = 1024;
+    const PAGE_TABLE_POOL_SIZE: usize = 8192;
 
     let pool_addr = boot::allocate_pages(
         AllocateType::AnyPages,
