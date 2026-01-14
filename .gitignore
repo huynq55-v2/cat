@@ -2,3 +2,4 @@
 OVMF_VARS_4M.fd
 OVMF_CODE_4M.fd
 /esp
+/serial_logs
