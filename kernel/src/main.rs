@@ -18,6 +18,7 @@ mod pml4;
 mod pmm;
 mod screen;
 mod syscalls;
+mod test_runner;
 
 // External Crate for Heap Allocation
 extern crate alloc;
@@ -78,6 +79,14 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
         syscalls::init(boot_info.hhdm_offset);
     }
 
+    #[cfg(feature = "integration-test")]
+    {
+        test_runner::run_tests();
+        // If tests pass, loop forever (QEMU will exit via test_runner).
+        // If we return, we might want to continue or halt.
+        loop {}
+    }
+
     println!("Loading user ELF...");
     // Gọi loader::load_user_elf
     let entry_point = load_user_elf(&mut mapper, &mut frame_allocator);
@@ -95,7 +104,14 @@ pub extern "C" fn _start(boot_info: &'static BootInfo) -> ! {
 
 // Panic Handler
 // Called on panic!(), prints error info and halts
+#[cfg(not(feature = "integration-test"))]
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     panic_handler_impl(info);
+}
+
+#[cfg(feature = "integration-test")]
+#[panic_handler]
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    test_runner::panic(info)
 }

@@ -3,6 +3,9 @@ name = "kernel"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+integration-test = []
+
 [dependencies]
 shared = { path = "../shared", features = ["serial"] }
 x86_64 = "0.15.4"

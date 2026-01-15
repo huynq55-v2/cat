@@ -8,3 +8,6 @@ lto = true # binary nhỏ, nhanh, sạch
 
 [profile.dev]
 panic = "abort"
+
+[profile.test]
+panic = "abort"
