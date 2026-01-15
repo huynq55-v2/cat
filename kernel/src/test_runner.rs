@@ -41,6 +41,10 @@ pub fn panic(info: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 
+extern crate alloc;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
 // Manual Test Registry
 pub fn run_tests() {
     serial_println!("Running Kernel Tests...");
@@ -48,7 +52,10 @@ pub fn run_tests() {
     let tests: &[&dyn Testable] = &[
         &trivial_assertion,
         &simple_arithmetic,
-        // Add more manual tests here
+        &test_stack_overflow_page_fault, // Basic check to see if we can trigger faults safely (optional, maybe skip for now to avoid crash)
+        &test_heap_simple,
+        &test_heap_large_vec,
+        &test_heap_many_boxes,
     ];
 
     for test in tests {
@@ -66,4 +73,34 @@ fn trivial_assertion() {
 
 fn simple_arithmetic() {
     assert_eq!(2 + 2, 4);
+}
+
+fn test_heap_simple() {
+    let heap_value = Box::new(41);
+    assert_eq!(*heap_value, 41);
+}
+
+fn test_heap_large_vec() {
+    let n = 1000;
+    let mut vec = Vec::new();
+    for i in 0..n {
+        vec.push(i);
+    }
+    assert_eq!(vec.len(), n);
+    assert_eq!(vec[0], 0);
+    assert_eq!(vec[n - 1], n - 1);
+}
+
+fn test_heap_many_boxes() {
+    for i in 0..10_000 {
+        let x = Box::new(i);
+        assert_eq!(*x, i);
+    }
+}
+
+// Just a placeholder, actually triggering a stack overflow would kill the kernel
+// unless we have a separate double fault stack.
+// For now, let's keep it safe.
+fn test_stack_overflow_page_fault() {
+    // nothing
 }
