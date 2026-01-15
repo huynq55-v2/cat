@@ -43,6 +43,8 @@ cp target/x86_64-unknown-none/release/kernel esp/kernel
 
 qemu-system-x86_64 \
     -enable-kvm \
+    -display none \
+    -no-reboot \
     -m 512M \
     -drive if=pflash,format=raw,readonly=on,file=OVMF_CODE_4M.fd \
     -drive if=pflash,format=raw,readonly=on,file=OVMF_VARS_4M.fd \

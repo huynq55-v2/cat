@@ -5,7 +5,7 @@ description: Tools and commands for debugging Rust OS kernel, UEFI bootloader, a
 
 # Rust Debugging Skill
 
-This skill provides commands and workflows for inspecting binaries and debugging the OS components.
+This skill provides commands and workflows for inspecting binaries and debugging the OS components on Linux.
 
 ## Prerequisites
 
@@ -14,6 +14,7 @@ This skill provides commands and workflows for inspecting binaries and debugging
   rustup component add llvm-tools-preview
   ```
 - **Rust Object Tools**: Recommended usage via `rust-objdump`, `rust-nm`, or standard `llvm-*` tools found in your Rust toolchain.
+- **GDB**: Ensure `gdb` or `rust-gdb` is installed (`sudo apt install gdb`).
 
 ## 1. User Space Debugging (Static Musl Binaries)
 
@@ -49,6 +50,29 @@ Use `llvm-objdump` to check the kernel binary structure before it gets packed.
 rust-objdump -h target/x86_64-unknown-none/release/kernel
 ```
 
+### QEMU + GDB Debugging
+To debug the running kernel with GDB:
+
+1.  **Launch QEMU with GDB Stub**:
+    Add `-s -S` to your QEMU command.
+    - `-s`: Shorthand for `-gdb tcp::1234`
+    - `-S`: Freeze CPU at startup (wait for debugger)
+
+2.  **Attach GDB**:
+    Open a new terminal and run:
+    ```bash
+    rust-gdb target/x86_64-unknown-none/debug/kernel
+    ```
+    (Ensure you point to the *compiled kernel binary* to load symbols)
+
+3.  **Connect to QEMU**:
+    Inside GDB:
+    ```gdb
+    target remote :1234
+    break _start
+    continue
+    ```
+
 ### QEMU Monitor
 When QEMU is running:
 - Press `Ctrl+Alt+2` to switch to the QEMU Monitor.
@@ -61,3 +85,4 @@ When QEMU is running:
 - **Check Code**: `cargo check`
 - **Clippy**: `cargo clippy`
 - **Macro Expansion**: `cargo expand` (requires `cargo-expand` crate)
+
