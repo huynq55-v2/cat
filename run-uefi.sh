@@ -21,6 +21,20 @@ echo "[*] Building UEFI bootloader..."
 cargo +nightly uefi_boot --release
 
 # ==========================
+# BUILD USER SPACE
+# ==========================
+echo "[*] Building User Space programs..."
+for src in user_space/*.rs; do
+    [ -e "$src" ] || continue
+    name=$(basename "$src" .rs)
+    echo "  -> Compiling $name"
+    rustc "$src" \
+        --target x86_64-unknown-linux-musl \
+        -C target-feature=+crt-static \
+        -o "user_space/$name"
+done
+
+# ==========================
 # BUILD KERNEL
 # ==========================
 echo "[*] Building kernel..."

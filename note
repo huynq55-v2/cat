@@ -849,3 +849,70 @@ let (system_table, map) = system_table
 Bạn có thể dùng chính đoạn snippet này để minh họa cho phần 5.
 
 Bạn thấy dàn ý này thế nào? Đủ "drama" chưa?
+===============================================================================
+Để chạy được file level1 trong user space, tôi đã phân tích file binary và kernel hiện tại của bạn. Dưới đây là những gì bạn cần biết và các bước tiếp theo:
+
+1. Phân tích yêu cầu của level1
+Dựa trên lệnh strace, chương trình level1 (Rust + musl) sử dụng các syscall sau:
+
+Khởi tạo: 
+arch_prctl
+ (thiết lập TLS - rất quan trọng với Rust), 
+set_tid_address
+, 
+ioctl
+/
+poll
+ (kiểm tra thiết bị đầu cuối), 
+rt_sigaction
+ (xử lý tín hiệu).
+Bộ nhớ: 
+brk
+, 
+mmap
+, 
+mprotect
+, 
+munmap
+ (do Vec cấp phát bộ nhớ động).
+Đầu ra: 
+write
+ (để in số 1000).
+Kết thúc: 
+exit_group
+.
+2. Trạng thái Kernel hiện tại
+Kernel của bạn đã có sẵn các implementation (hoặc stub) đủ để chạy chương trình đơn giản này:
+
+arch_prctl
+: Đã implement (quan trọng nhất để không bị crash đoạn đầu).
+write
+, 
+exit_group
+: Đã implement.
+brk
+, 
+mmap
+: Đã implement dưới dạng logic đơn giản (pre-mapped size cố định). Vì level1 chỉ dùng rất ít bộ nhớ (vài KB), nó sẽ hoạt động tốt trong vùng 1MB heap / 512KB mmap pool đã được map sẵn.
+poll
+, 
+rt_sigaction
+: Đã stub (trả về 0/success), đủ để lừa musl runtime rằng mọi thứ ổn.
+3. Hành động đã thực hiện
+Để chạy file này thay vì file hello cũ, tôi đã tự động cập nhật file 
+kernel/src/elf_loader.rs
+ cho bạn:
+
+Đổi include_bytes!("../../user_space/hello") thành include_bytes!("../../user_space/level1").
+4. Câu trả lời cho câu hỏi của bạn
+Bạn không cần implement thêm syscall mới ngay lập tức để chạy chỉ riêng file này, nhưng để Kernel hoàn thiện và chạy được các app phức tạp hơn, bạn cần implement tiếp:
+
+Bộ nhớ động thực thụ (Feature quan trọng nhất):
+Hiện tại 
+sys_brk
+ và 
+sys_mmap
+ chỉ trả về địa chỉ trong vùng đã map sẵn (0x8000000 và 0x480000).
+Nếu app dùng nhiều RAM hơn mức này, nó sẽ crash. Bạn cần sửa 
+sys_brk
+ để nó thực sự gọi Memory Manager và map page mới khi cần thiết.

@@ -20,7 +20,7 @@ const USER_STACK_SIZE: u64 = 16 * 4096; // 64 KB stack
 
 // Include the user ELF binary at compile time
 // Change this path to load a different program
-static USER_ELF_BYTES: &[u8] = include_bytes!("../../user_space/hello");
+static USER_ELF_BYTES: &[u8] = include_bytes!("../../user_space/level1");
 
 // Global variable to store HHDM offset
 static mut HHDM_OFFSET: u64 = 0;
